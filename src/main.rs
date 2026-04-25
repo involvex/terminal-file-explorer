@@ -27,10 +27,15 @@ struct App {
     config: Config,
     theme: Theme,
     dialog: DialogState,
-    editor_content: String,
+    editor_content: Vec<String>,
     editor_path: Option<PathBuf>,
     editor_modified: bool,
     in_editor: bool,
+    cursor_line: usize,
+    cursor_col: usize,
+    scroll_offset: usize,
+    undo_stack: Vec<Vec<String>>,
+    redo_stack: Vec<Vec<String>>,
 }
 
 impl App {
@@ -49,10 +54,15 @@ impl App {
             config,
             theme,
             dialog: DialogState::default(),
-            editor_content: String::new(),
+            editor_content: Vec::new(),
             editor_path: None,
             editor_modified: false,
             in_editor: false,
+            cursor_line: 0,
+            cursor_col: 0,
+            scroll_offset: 0,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -86,10 +96,15 @@ impl App {
         if let Some(entry) = self.state.selected_entry() {
             if !entry.is_dir {
                 if let Ok(content) = fs::read_file(&entry.path) {
-                    self.editor_content = content;
+                    self.editor_content = content.lines().map(|s| s.to_string()).collect();
                     self.editor_path = Some(entry.path.clone());
                     self.editor_modified = false;
                     self.in_editor = true;
+                    self.cursor_line = 0;
+                    self.cursor_col = 0;
+                    self.scroll_offset = 0;
+                    self.undo_stack.clear();
+                    self.redo_stack.clear();
                 }
             }
         }
@@ -97,7 +112,8 @@ impl App {
 
     fn save_editor(&mut self) {
         if let Some(path) = &self.editor_path {
-            if fs::write_file(path, &self.editor_content).is_ok() {
+            let content = self.editor_content.join("\n");
+            if fs::write_file(path, &content).is_ok() {
                 self.editor_modified = false;
             }
         }
@@ -106,8 +122,34 @@ impl App {
     fn close_editor(&mut self) {
         self.in_editor = false;
         self.editor_path = None;
-        self.editor_content = String::new();
+        self.editor_content.clear();
         self.editor_modified = false;
+        self.cursor_line = 0;
+        self.cursor_col = 0;
+        self.scroll_offset = 0;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+    }
+
+    fn push_undo(&mut self) {
+        self.undo_stack.push(self.editor_content.clone());
+        self.redo_stack.clear();
+    }
+
+    fn undo(&mut self) {
+        if let Some(prev) = self.undo_stack.pop() {
+            self.redo_stack.push(self.editor_content.clone());
+            self.editor_content = prev;
+            self.editor_modified = true;
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(next) = self.redo_stack.pop() {
+            self.undo_stack.push(self.editor_content.clone());
+            self.editor_content = next;
+            self.editor_modified = true;
+        }
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) {
@@ -121,24 +163,29 @@ impl App {
             return;
         }
 
+        let has_parent = self.state.cwd.parent().is_some();
         match key.code {
             KeyCode::Up => {
                 if self.state.selected > 0 {
                     self.state.selected -= 1;
+                } else if has_parent {
+                    self.state.selected = 0;
                 }
             }
             KeyCode::Down => {
-                if self.state.selected < self.state.entries.len().saturating_sub(1) {
+                let max_idx = if has_parent {
+                    self.state.entries.len()
+                } else {
+                    self.state.entries.len().saturating_sub(1)
+                };
+                if self.state.selected < max_idx {
                     self.state.selected += 1;
                 }
             }
             KeyCode::Enter => {
-                if self
-                    .state
-                    .selected_entry()
-                    .map(|e| e.is_dir)
-                    .unwrap_or(false)
-                {
+                if self.state.is_parent_selected() {
+                    self.state.cd_parent();
+                } else {
                     self.state.cd_into();
                 }
             }
@@ -223,20 +270,119 @@ impl App {
 
     fn handle_editor_key(&mut self, key: KeyEvent) {
         match key.code {
+            KeyCode::Up => {
+                if self.cursor_line > 0 {
+                    self.cursor_line -= 1;
+                    if self.cursor_col
+                        > self
+                            .editor_content
+                            .get(self.cursor_line)
+                            .map(|l| l.len())
+                            .unwrap_or(0)
+                    {
+                        self.cursor_col = self.editor_content[self.cursor_line].len();
+                    }
+                }
+                if self.cursor_line < self.scroll_offset {
+                    self.scroll_offset = self.cursor_line;
+                }
+            }
+            KeyCode::Down => {
+                if self.cursor_line < self.editor_content.len().saturating_sub(1) {
+                    self.cursor_line += 1;
+                    if self.cursor_col
+                        > self
+                            .editor_content
+                            .get(self.cursor_line)
+                            .map(|l| l.len())
+                            .unwrap_or(0)
+                    {
+                        self.cursor_col = self.editor_content[self.cursor_line].len();
+                    }
+                }
+                if self.cursor_line >= self.scroll_offset + 20 {
+                    self.scroll_offset = self.cursor_line - 19;
+                }
+            }
+            KeyCode::Left => {
+                if self.cursor_col > 0 {
+                    self.cursor_col -= 1;
+                } else if self.cursor_line > 0 {
+                    self.cursor_line -= 1;
+                    self.cursor_col = self.editor_content[self.cursor_line].len();
+                }
+            }
+            KeyCode::Right => {
+                let line_len = self
+                    .editor_content
+                    .get(self.cursor_line)
+                    .map(|l| l.len())
+                    .unwrap_or(0);
+                if self.cursor_col < line_len {
+                    self.cursor_col += 1;
+                } else if self.cursor_line < self.editor_content.len() - 1 {
+                    self.cursor_line += 1;
+                    self.cursor_col = 0;
+                }
+            }
+            KeyCode::Home => {
+                self.cursor_col = 0;
+            }
+            KeyCode::End => {
+                self.cursor_col = self
+                    .editor_content
+                    .get(self.cursor_line)
+                    .map(|l| l.len())
+                    .unwrap_or(0);
+            }
             KeyCode::Char(c)
                 if !key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.editor_content.push(c);
+                self.push_undo();
+                if self.cursor_line >= self.editor_content.len() {
+                    self.editor_content.push(String::new());
+                }
+                self.editor_content[self.cursor_line].insert(self.cursor_col, c);
+                self.cursor_col += 1;
                 self.editor_modified = true;
             }
             KeyCode::Backspace => {
-                self.editor_content.pop();
-                self.editor_modified = true;
+                if self.cursor_col > 0 {
+                    self.push_undo();
+                    self.editor_content[self.cursor_line].remove(self.cursor_col - 1);
+                    self.cursor_col -= 1;
+                    self.editor_modified = true;
+                } else if self.cursor_line > 0 {
+                    self.push_undo();
+                    let _current_len = self.editor_content[self.cursor_line].len();
+                    let current = self.editor_content.remove(self.cursor_line);
+                    self.cursor_line -= 1;
+                    self.cursor_col = self.editor_content[self.cursor_line].len();
+                    self.editor_content[self.cursor_line].push_str(&current);
+                    self.editor_modified = true;
+                }
             }
             KeyCode::Enter => {
-                self.editor_content.push('\n');
+                self.push_undo();
+                if self.cursor_line >= self.editor_content.len() {
+                    self.editor_content.push(String::new());
+                }
+                let current = self.editor_content[self.cursor_line].clone();
+                let new_line = if self.cursor_col >= current.len() {
+                    String::new()
+                } else {
+                    current[self.cursor_col..].to_string()
+                };
+                self.editor_content[self.cursor_line] = if self.cursor_col >= current.len() {
+                    current
+                } else {
+                    current[..self.cursor_col].to_string()
+                };
+                self.editor_content.insert(self.cursor_line + 1, new_line);
+                self.cursor_line += 1;
+                self.cursor_col = 0;
                 self.editor_modified = true;
             }
             KeyCode::Esc => {
@@ -255,6 +401,20 @@ impl App {
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 self.close_editor();
+            }
+            KeyCode::Char('z')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.undo();
+            }
+            KeyCode::Char('y')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.redo();
             }
             _ => {}
         }
@@ -363,24 +523,31 @@ impl App {
                 }
             }
             MouseEventKind::ScrollDown => {
-                if self.state.selected < self.state.entries.len().saturating_sub(1) {
+                let has_parent = self.state.cwd.parent().is_some();
+                let max_selected = if has_parent {
+                    self.state.entries.len()
+                } else {
+                    self.state.entries.len().saturating_sub(1)
+                };
+                if self.state.selected < max_selected {
                     self.state.selected += 1;
                 }
             }
             MouseEventKind::Down(_button) => {
-                let height = self.state.entries.len().min(20);
-                if mouse.row >= 1 && mouse.row < 1 + height as u16 {
-                    let idx = (mouse.row - 1) as usize;
-                    if idx < self.state.entries.len() {
-                        self.state.selected = idx;
-                        if self
-                            .state
-                            .selected_entry()
-                            .map(|e| e.is_dir)
-                            .unwrap_or(false)
-                        {
-                            self.state.cd_into();
+                let has_parent = self.state.cwd.parent().is_some();
+                let file_list_start = 4;
+                let base_offset = if has_parent { 1 } else { 0 };
+                let file_list_end =
+                    file_list_start + base_offset as u16 + self.state.entries.len().min(20) as u16;
+                if mouse.row >= file_list_start && mouse.row < file_list_end {
+                    let visual_idx = (mouse.row - file_list_start) as usize;
+                    if visual_idx >= base_offset {
+                        let entry_idx = visual_idx - base_offset;
+                        if entry_idx < self.state.entries.len() {
+                            self.state.selected = visual_idx;
                         }
+                    } else if has_parent && visual_idx == 0 {
+                        self.state.selected = 0;
                     }
                 }
             }
@@ -414,7 +581,11 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 fn draw_ui(
     state: &AppState,
     in_editor: bool,
-    editor_content: &str,
+    editor_content: &Vec<String>,
+    editor_modified: bool,
+    cursor_line: usize,
+    cursor_col: usize,
+    scroll_offset: usize,
     theme: &Theme,
     area: Rect,
     f: &mut Frame,
@@ -458,12 +629,28 @@ fn draw_ui(
         vertical[0],
     );
 
-    let list_items: Vec<ListItem> = state
+    let mut list_items: Vec<ListItem> = Vec::new();
+
+    let has_parent = state.cwd.parent().is_some();
+    if has_parent {
+        let is_selected = state.selected == 0;
+        let content = "[D] ..                                           <PARENT>";
+        let style = if is_selected {
+            Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
+        } else {
+            Style::default().fg(theme.dir_fg)
+        };
+        list_items.push(ListItem::new(content).style(style));
+    }
+
+    let base_offset = if has_parent { 1 } else { 0 };
+    let list_items_from_fs: Vec<ListItem> = state
         .entries
         .iter()
         .enumerate()
         .map(|(i, entry)| {
-            let is_selected = i == state.selected;
+            let real_idx = base_offset + i;
+            let is_selected = real_idx == state.selected;
             let fg = if entry.is_dir {
                 theme.dir_fg
             } else {
@@ -485,6 +672,8 @@ fn draw_ui(
             ListItem::new(content).style(style)
         })
         .collect();
+
+    list_items.extend(list_items_from_fs);
 
     let mut list_state = ListState::default();
     list_state.select(Some(state.selected));
@@ -518,9 +707,9 @@ fn draw_ui(
     } else {
         "hidden"
     };
-    let preview_str = if state.preview_open { "on" } else { "off" };
+    let preview_str = if state.preview_open { "ON" } else { "OFF" };
     let status_text = format!(
-        " [{}] | Hidden: {} | Preview: {} | Sort: {} | Theme: {} | F5:Refresh | Tab:Preview | Ctrl+T:Theme | Ctrl+O:Sort",
+        "[{}] | Hidden:{}(Ctrl+P) | Preview:{}(Tab) | Sort:{} | Theme:{} | Ctrl+T:Theme | Ctrl+O:Sort | Ctrl+E:Edit | F5:Refresh | Del:Delete | Ctrl+N:NewFile | Ctrl+R:Rename | Enter:Open | ←:Back",
         entry_info, hidden_str, preview_str, sort_str, theme.name
     );
     f.render_widget(
@@ -563,16 +752,68 @@ fn draw_ui(
 
     if in_editor {
         let editor_area = centered_rect(90, 90, area);
+        let title = if editor_modified {
+            " Editor * "
+        } else {
+            " Editor "
+        };
         let editor_block = Block::default()
-            .title(" Editor ")
+            .title(title)
             .border_style(theme.border)
             .borders(Borders::ALL);
         f.render_widget(&editor_block, editor_area);
         let inner = editor_block.inner(editor_area);
+
+        let visible_lines = inner.height as usize;
+        let width = inner.width as usize;
+
+        let mut editor_lines: Vec<String> = Vec::new();
+        for i in 0..visible_lines {
+            let line_idx = scroll_offset + i;
+            if line_idx < editor_content.len() {
+                let line = &editor_content[line_idx];
+                let display_line = if line.len() > width.saturating_sub(2) {
+                    format!("{}{}", &line[..width.saturating_sub(2)], "<")
+                } else {
+                    line.clone()
+                };
+                if line_idx == cursor_line {
+                    let mut line_with_cursor = String::new();
+                    for (j, ch) in display_line.chars().enumerate() {
+                        if j == cursor_col {
+                            line_with_cursor.push('|');
+                        }
+                        line_with_cursor.push(ch);
+                    }
+                    if cursor_col >= display_line.len() {
+                        line_with_cursor.push('|');
+                    }
+                    editor_lines.push(line_with_cursor);
+                } else {
+                    editor_lines.push(display_line);
+                }
+            } else {
+                editor_lines.push("~".to_string());
+            }
+        }
+
+        let editor_text = editor_lines.join("\n");
         f.render_widget(
-            Paragraph::new(editor_content)
+            Paragraph::new(editor_text)
                 .style(Style::default().fg(theme.editor_fg).bg(theme.editor_bg)),
             inner,
+        );
+
+        let hints = " Ctrl+S:Save | Ctrl+Z:Undo | Ctrl+Y:Redo | Esc:Close ";
+        let hints_area = Rect::new(
+            inner.x,
+            inner.y + inner.height.saturating_sub(1),
+            inner.width,
+            1,
+        );
+        f.render_widget(
+            Paragraph::new(hints).style(Style::default().fg(theme.title).bg(theme.editor_bg)),
+            hints_area,
         );
     }
 }
@@ -712,6 +953,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &app.state,
                 app.in_editor,
                 &app.editor_content,
+                app.editor_modified,
+                app.cursor_line,
+                app.cursor_col,
+                app.scroll_offset,
                 &app.theme,
                 f.area(),
                 f,

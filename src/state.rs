@@ -161,11 +161,20 @@ impl AppState {
     }
 
     pub fn selected_entry(&self) -> Option<&FileEntry> {
-        self.entries.get(self.selected)
+        let has_parent = self.cwd.parent().is_some();
+        let offset = if has_parent { 1 } else { 0 };
+        let adjusted_idx = self.selected.saturating_sub(offset);
+        self.entries.get(adjusted_idx)
     }
 
     pub fn cd_into(&mut self) -> bool {
-        if let Some(entry) = self.selected_entry() {
+        let has_parent = self.cwd.parent().is_some();
+        if has_parent && self.selected == 0 {
+            return false;
+        }
+        let offset = if has_parent { 1 } else { 0 };
+        let entry_idx = self.selected.saturating_sub(offset);
+        if let Some(entry) = self.entries.get(entry_idx) {
             if entry.is_dir {
                 self.cwd = entry.path.clone();
                 self.load_dir();
@@ -182,5 +191,9 @@ impl AppState {
             self.load_dir();
             self.selected = 0;
         }
+    }
+
+    pub fn is_parent_selected(&self) -> bool {
+        self.cwd.parent().is_some() && self.selected == 0
     }
 }
