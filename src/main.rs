@@ -1,5 +1,6 @@
 mod config;
 mod fs;
+mod git;
 mod preview;
 mod state;
 mod theme;
@@ -7,12 +8,13 @@ mod theme;
 use config::Config;
 use crossterm::{
     event::{
-        DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, MouseEvent,
-        MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, SetTitle},
 };
+use git::{FileGitStatus, GitStatus};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
@@ -36,7 +38,7 @@ struct App {
     scroll_offset: usize,
     undo_stack: Vec<Vec<String>>,
     redo_stack: Vec<Vec<String>>,
-    just_entered_folder: bool,
+    git_status: Option<GitStatus>,
 }
 
 impl App {
@@ -49,6 +51,7 @@ impl App {
         let mut state = AppState::new(cwd);
         state.show_hidden = config.show_hidden;
         state.load_dir();
+        let git_status = GitStatus::get_for_path(&state.cwd);
 
         Self {
             state,
@@ -64,8 +67,12 @@ impl App {
             scroll_offset: 0,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            just_entered_folder: false,
+            git_status,
         }
+    }
+
+    fn refresh_git_status(&mut self) {
+        self.git_status = GitStatus::get_for_path(&self.state.cwd);
     }
 
     fn cycle_theme(&mut self) {
@@ -168,15 +175,11 @@ impl App {
         let has_parent = self.state.cwd.parent().is_some();
         match key.code {
             KeyCode::Up => {
-                self.just_entered_folder = false;
                 if self.state.selected > 0 {
                     self.state.selected -= 1;
-                } else if has_parent {
-                    self.state.selected = 0;
                 }
             }
             KeyCode::Down => {
-                self.just_entered_folder = false;
                 let max_idx = if has_parent {
                     self.state.entries.len()
                 } else {
@@ -187,19 +190,17 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                if self.just_entered_folder {
-                    self.just_entered_folder = false;
-                } else if self.state.is_parent_selected() {
+                if self.state.is_parent_selected() {
                     self.state.cd_parent();
+                    self.refresh_git_status();
                 } else {
-                    if self.state.cd_into() {
-                        self.just_entered_folder = true;
-                    }
+                    self.state.cd_into();
+                    self.refresh_git_status();
                 }
             }
             KeyCode::BackTab | KeyCode::Left => {
-                self.just_entered_folder = false;
                 self.state.cd_parent();
+                self.refresh_git_status();
             }
             KeyCode::Tab => {
                 self.toggle_preview();
@@ -269,6 +270,7 @@ impl App {
             }
             KeyCode::F(5) => {
                 self.state.refresh();
+                self.refresh_git_status();
             }
             KeyCode::Esc => {
                 self.cancel_dialog();
@@ -470,6 +472,7 @@ impl App {
                 } else {
                     self.dialog.hide();
                     self.state.refresh();
+                    self.refresh_git_status();
                 }
             }
             DialogType::NewFolder => {
@@ -482,6 +485,7 @@ impl App {
                 } else {
                     self.dialog.hide();
                     self.state.refresh();
+                    self.refresh_git_status();
                 }
             }
             DialogType::Rename => {
@@ -495,6 +499,7 @@ impl App {
                     } else {
                         self.dialog.hide();
                         self.state.refresh();
+                        self.refresh_git_status();
                     }
                 }
             }
@@ -512,6 +517,7 @@ impl App {
             } else {
                 self.dialog.hide();
                 self.state.refresh();
+                self.refresh_git_status();
             }
         }
     }
@@ -543,7 +549,6 @@ impl App {
                 }
             }
             MouseEventKind::Down(_button) => {
-                self.just_entered_folder = false;
                 let has_parent = self.state.cwd.parent().is_some();
                 let file_list_start = 4;
                 let base_offset = if has_parent { 1 } else { 0 };
@@ -590,6 +595,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 fn draw_ui(
     state: &AppState,
+    git_status: Option<&GitStatus>,
     in_editor: bool,
     editor_content: &Vec<String>,
     editor_modified: bool,
@@ -633,9 +639,13 @@ fn draw_ui(
     )
     .split(file_list_chunk);
 
-    let title = format!(" {} ", state.cwd.display());
+    let title_text = if let Some(git) = git_status {
+        format!(" {} | git:{} ", state.cwd.display(), git.branch)
+    } else {
+        format!(" {} ", state.cwd.display())
+    };
     f.render_widget(
-        Paragraph::new(title).style(Style::default().fg(theme.title).bg(theme.status_bg)),
+        Paragraph::new(title_text).style(Style::default().fg(theme.title).bg(theme.status_bg)),
         vertical[0],
     );
 
@@ -644,7 +654,7 @@ fn draw_ui(
     let has_parent = state.cwd.parent().is_some();
     if has_parent {
         let is_selected = state.selected == 0;
-        let content = "[D] ..                                           <PARENT>";
+        let content = "\u{1F4C2} ..                                           <PARENT>";
         let style = if is_selected {
             Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
         } else {
@@ -661,21 +671,77 @@ fn draw_ui(
         .map(|(i, entry)| {
             let real_idx = base_offset + i;
             let is_selected = real_idx == state.selected;
-            let fg = if entry.is_dir {
-                theme.dir_fg
+
+            let git_fg = if let Some(git) = git_status {
+                match git.get_file_status(&entry.name) {
+                    FileGitStatus::StagedNew
+                    | FileGitStatus::StagedModified
+                    | FileGitStatus::StagedDeleted => ratatui::style::Color::Green,
+                    FileGitStatus::Modified
+                    | FileGitStatus::Deleted
+                    | FileGitStatus::Renamed
+                    | FileGitStatus::Copied => ratatui::style::Color::Red,
+                    FileGitStatus::Untracked => ratatui::style::Color::Yellow,
+                    _ => {
+                        if entry.is_dir {
+                            theme.dir_fg
+                        } else {
+                            theme.file_fg
+                        }
+                    }
+                }
             } else {
-                theme.file_fg
+                if entry.is_dir {
+                    theme.dir_fg
+                } else {
+                    theme.file_fg
+                }
             };
-            let prefix = if entry.is_dir { "[D] " } else { "[F] " };
+
+            let fg = if is_selected {
+                theme.selected_fg
+            } else {
+                git_fg
+            };
+            let bg = if is_selected {
+                Some(theme.selected_bg)
+            } else {
+                None
+            };
+
+            let icon = if entry.is_dir {
+                "\u{1F4C1} "
+            } else {
+                let ext = entry.name.split('.').last().unwrap_or("").to_lowercase();
+                match ext.as_str() {
+                    "rs" => "\u{1E916} ",
+                    "py" => "\u{1F40D} ",
+                    "js" | "ts" => "\u{1F4DC} ",
+                    "go" => "\u{1F981} ",
+                    "java" => "\u{2615} ",
+                    "c" | "cpp" | "h" | "hpp" => "\u{1F4BB} ",
+                    "toml" | "yaml" | "yml" | "json" | "xml" => "\u{1F4DD} ",
+                    "md" => "\u{1F4D6} ",
+                    "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "webp" | "svg" => "\u{1F5BC} ",
+                    "mp3" | "flac" | "wav" | "ogg" | "m4a" | "aac" => "\u{1F3B5} ",
+                    "pdf" => "\u{1F4C4} ",
+                    "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" => "\u{1F4E6} ",
+                    "sh" | "bash" | "zsh" | "bat" | "ps1" => "\u{1F4A0} ",
+                    "css" | "scss" | "less" => "\u{1F3A8} ",
+                    "html" | "htm" => "\u{1F310} ",
+                    "lock" => "\u{1F512} ",
+                    _ => "\u{1F4C4} ",
+                }
+            };
             let content = format!(
-                "{}{:<40} {:>8} {}",
-                prefix,
+                "{} {:<38} {:>8} {}",
+                icon,
                 entry.name,
                 entry.size_formatted(),
                 entry.modified_formatted()
             );
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
+            let style = if let Some(bg_color) = bg {
+                Style::default().fg(fg).bg(bg_color)
             } else {
                 Style::default().fg(fg)
             };
@@ -942,6 +1008,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if crossterm::event::poll(std::time::Duration::from_millis(100))? {
             match crossterm::event::read()? {
                 Event::Key(key) => {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     if key.code == KeyCode::Char('c')
                         && key
                             .modifiers
@@ -961,6 +1030,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         terminal.draw(|f| {
             draw_ui(
                 &app.state,
+                app.git_status.as_ref(),
                 app.in_editor,
                 &app.editor_content,
                 app.editor_modified,
