@@ -168,11 +168,8 @@ impl AppState {
     }
 
     pub fn cd_into(&mut self) -> bool {
-        let has_parent = self.cwd.parent().is_some();
-        if has_parent && self.selected == 0 {
-            return false;
-        }
-        let offset = if has_parent { 1 } else { 0 };
+        let has_parent_before = self.cwd.parent().is_some();
+        let offset = if has_parent_before { 1 } else { 0 };
         let entry_idx = self.selected.saturating_sub(offset);
         if let Some(entry) = self.entries.get(entry_idx) {
             if entry.is_dir {

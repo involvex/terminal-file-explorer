@@ -36,6 +36,7 @@ struct App {
     scroll_offset: usize,
     undo_stack: Vec<Vec<String>>,
     redo_stack: Vec<Vec<String>>,
+    just_entered_folder: bool,
 }
 
 impl App {
@@ -63,6 +64,7 @@ impl App {
             scroll_offset: 0,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            just_entered_folder: false,
         }
     }
 
@@ -166,6 +168,7 @@ impl App {
         let has_parent = self.state.cwd.parent().is_some();
         match key.code {
             KeyCode::Up => {
+                self.just_entered_folder = false;
                 if self.state.selected > 0 {
                     self.state.selected -= 1;
                 } else if has_parent {
@@ -173,6 +176,7 @@ impl App {
                 }
             }
             KeyCode::Down => {
+                self.just_entered_folder = false;
                 let max_idx = if has_parent {
                     self.state.entries.len()
                 } else {
@@ -183,13 +187,18 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                if self.state.is_parent_selected() {
+                if self.just_entered_folder {
+                    self.just_entered_folder = false;
+                } else if self.state.is_parent_selected() {
                     self.state.cd_parent();
                 } else {
-                    self.state.cd_into();
+                    if self.state.cd_into() {
+                        self.just_entered_folder = true;
+                    }
                 }
             }
             KeyCode::BackTab | KeyCode::Left => {
+                self.just_entered_folder = false;
                 self.state.cd_parent();
             }
             KeyCode::Tab => {
@@ -534,6 +543,7 @@ impl App {
                 }
             }
             MouseEventKind::Down(_button) => {
+                self.just_entered_folder = false;
                 let has_parent = self.state.cwd.parent().is_some();
                 let file_list_start = 4;
                 let base_offset = if has_parent { 1 } else { 0 };
