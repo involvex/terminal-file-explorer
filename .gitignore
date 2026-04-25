@@ -24,3 +24,8 @@ rustc-ice-*.txt
 #.idea/
 *.log
 .env
+
+node_modules/
+dist/
+.DS_Store
+*.local

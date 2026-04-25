@@ -1,0 +1,23 @@
+{
+  "name": "@involvex/terminal-file-explorer",
+  "version": "0.1.0",
+  "author": {
+    "name": "involvex"
+  },
+  "description": "A terminal file explorer",
+  "bin": {
+    "terminal-file-explorer": "target/release/terminal-file-explorer.exe"
+  },
+  "scripts": {
+    "build": "cargo build --release",
+    "dev": "cargo run",
+    "format": "cargo fmt --all",
+    "fix": "cargo fix",
+    "check": "cargo check",
+    "prepublishOnly": "bun run build"
+  },
+  "files": [
+    "target/release",
+    "Readme.md"
+  ]
+}
