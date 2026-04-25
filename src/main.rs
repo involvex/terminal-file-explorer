@@ -1,10 +1,13 @@
+mod command_palette;
 mod config;
 mod fs;
 mod git;
+mod menu;
 mod preview;
 mod state;
 mod theme;
 
+use command_palette::{CommandPaletteResult, CommandPaletteState};
 use config::Config;
 use crossterm::{
     event::{
@@ -15,6 +18,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, SetTitle},
 };
 use git::{FileGitStatus, GitStatus};
+use menu::{MenuAction, MenuBarState};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
@@ -39,6 +43,10 @@ struct App {
     undo_stack: Vec<Vec<String>>,
     redo_stack: Vec<Vec<String>>,
     git_status: Option<GitStatus>,
+    menu_bar: MenuBarState,
+    command_palette: CommandPaletteState,
+    show_about: bool,
+    show_keybindings: bool,
 }
 
 impl App {
@@ -68,6 +76,10 @@ impl App {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             git_status,
+            menu_bar: MenuBarState::new(),
+            command_palette: CommandPaletteState::new(),
+            show_about: false,
+            show_keybindings: false,
         }
     }
 
@@ -161,25 +173,149 @@ impl App {
         }
     }
 
-    fn handle_key_event(&mut self, key: KeyEvent) {
+    fn execute_action(&mut self, action: MenuAction) -> bool {
+        match action {
+            MenuAction::NewFile => {
+                self.dialog.show(DialogType::NewFile);
+            }
+            MenuAction::NewFolder => {
+                self.dialog.show(DialogType::NewFolder);
+            }
+            MenuAction::Rename => {
+                if self.state.selected_entry().is_some() {
+                    self.dialog.show(DialogType::Rename);
+                    if let Some(entry) = self.state.selected_entry() {
+                        self.dialog.input = entry.name.clone();
+                    }
+                }
+            }
+            MenuAction::Delete => {
+                if self.state.selected_entry().is_some() {
+                    self.dialog.show(DialogType::Delete);
+                    self.dialog.input = String::new();
+                }
+            }
+            MenuAction::Quit => {
+                return true;
+            }
+            MenuAction::Undo => {
+                if self.in_editor {
+                    self.undo();
+                }
+            }
+            MenuAction::Redo => {
+                if self.in_editor {
+                    self.redo();
+                }
+            }
+            MenuAction::ToggleHidden => {
+                self.toggle_hidden();
+            }
+            MenuAction::TogglePreview => {
+                self.toggle_preview();
+            }
+            MenuAction::CycleSort => {
+                self.cycle_sort();
+            }
+            MenuAction::CycleTheme => {
+                self.cycle_theme();
+            }
+            MenuAction::Refresh => {
+                self.state.refresh();
+                self.refresh_git_status();
+            }
+            MenuAction::OpenEditor => {
+                self.open_editor();
+            }
+            MenuAction::GoUp => {
+                self.state.cd_parent();
+                self.refresh_git_status();
+            }
+            MenuAction::ShowKeybindings => {
+                self.show_keybindings = true;
+            }
+            MenuAction::ShowAbout => {
+                self.show_about = true;
+            }
+            MenuAction::OpenCommandPalette => {
+                self.command_palette.open();
+            }
+        }
+        false
+    }
+
+    fn handle_key_event(&mut self, key: KeyEvent) -> bool {
+        if self.command_palette.active {
+            let result = self.command_palette.handle_key_event(key);
+            match result {
+                CommandPaletteResult::Action(action) => {
+                    return self.execute_action(action);
+                }
+                CommandPaletteResult::Close => {
+                    return false;
+                }
+                CommandPaletteResult::Continue => {
+                    return false;
+                }
+            }
+        }
+
+        if self.show_about {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.show_about = false;
+                }
+                _ => {}
+            }
+            return false;
+        }
+
+        if self.show_keybindings {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.show_keybindings = false;
+                }
+                _ => {}
+            }
+            return false;
+        }
+
+        if self.menu_bar.is_open() {
+            let action = self.menu_bar.handle_key_event(key);
+            if let Some(action) = action {
+                return self.execute_action(action);
+            }
+            return false;
+        }
+
         if self.in_editor {
             self.handle_editor_key(key);
-            return;
+            return false;
         }
 
         if self.dialog.dialog_type != DialogType::None {
             self.handle_dialog_key(key);
-            return;
+            return false;
         }
 
-        let has_parent = self.state.cwd.parent().is_some();
         match key.code {
+            KeyCode::F(10) => {
+                self.menu_bar.open(0);
+            }
+            KeyCode::Char('P')
+                if key.modifiers.contains(
+                    crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+                ) =>
+            {
+                self.command_palette.open();
+            }
             KeyCode::Up => {
                 if self.state.selected > 0 {
                     self.state.selected -= 1;
                 }
             }
             KeyCode::Down => {
+                let has_parent = self.state.cwd.parent().is_some();
                 let max_idx = if has_parent {
                     self.state.entries.len()
                 } else {
@@ -277,6 +413,7 @@ impl App {
             }
             _ => {}
         }
+        false
     }
 
     fn handle_editor_key(&mut self, key: KeyEvent) {
@@ -527,7 +664,34 @@ impl App {
     }
 
     fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        if self.in_editor {
+        if self.in_editor || self.command_palette.active || self.show_about || self.show_keybindings
+        {
+            return;
+        }
+
+        if self.menu_bar.is_open() {
+            match mouse.kind {
+                MouseEventKind::Down(_button) => {
+                    if mouse.row == 0 {
+                        let mut offset = 0u16;
+                        for (i, menu) in self.menu_bar.menus.iter().enumerate() {
+                            let menu_width = menu.name.len() as u16 + 2;
+                            if mouse.column >= offset && mouse.column < offset + menu_width {
+                                if self.menu_bar.open_index == Some(i) {
+                                    self.menu_bar.close();
+                                } else {
+                                    self.menu_bar.open(i);
+                                }
+                                return;
+                            }
+                            offset += menu_width + 1;
+                        }
+                    } else {
+                        self.menu_bar.close();
+                    }
+                }
+                _ => {}
+            }
             return;
         }
 
@@ -549,8 +713,21 @@ impl App {
                 }
             }
             MouseEventKind::Down(_button) => {
+                if mouse.row == 0 {
+                    let mut offset = 0u16;
+                    for (i, menu) in self.menu_bar.menus.iter().enumerate() {
+                        let menu_width = menu.name.len() as u16 + 2;
+                        if mouse.column >= offset && mouse.column < offset + menu_width {
+                            self.menu_bar.open(i);
+                            return;
+                        }
+                        offset += menu_width + 1;
+                    }
+                    return;
+                }
+
                 let has_parent = self.state.cwd.parent().is_some();
-                let file_list_start = 4;
+                let file_list_start = 5;
                 let base_offset = if has_parent { 1 } else { 0 };
                 let file_list_end =
                     file_list_start + base_offset as u16 + self.state.entries.len().min(20) as u16;
@@ -608,6 +785,15 @@ fn draw_ui(
 ) {
     f.render_widget(ratatui::widgets::Clear, area);
 
+    let menu_bar_height: u16 = 1;
+
+    let main_area = Rect {
+        x: area.x,
+        y: area.y + menu_bar_height,
+        width: area.width,
+        height: area.height.saturating_sub(menu_bar_height),
+    };
+
     let preview_chunks = if state.preview_open && !in_editor {
         Some(
             Layout::new(
@@ -618,7 +804,7 @@ fn draw_ui(
                     Constraint::Percentage(48),
                 ],
             )
-            .split(area),
+            .split(main_area),
         )
     } else {
         None
@@ -626,7 +812,7 @@ fn draw_ui(
 
     let (file_list_chunk, preview_chunk) = match preview_chunks {
         Some(chunks) => (chunks[0], Some(chunks[2])),
-        None => (area, None),
+        None => (main_area, None),
     };
 
     let vertical = Layout::new(
@@ -785,7 +971,7 @@ fn draw_ui(
     };
     let preview_str = if state.preview_open { "ON" } else { "OFF" };
     let status_text = format!(
-        "[{}] | Hidden:{}(Ctrl+P) | Preview:{}(Tab) | Sort:{} | Theme:{} | Ctrl+T:Theme | Ctrl+O:Sort | Ctrl+E:Edit | F5:Refresh | Del:Delete | Ctrl+N:NewFile | Ctrl+R:Rename | Enter:Open | ←:Back",
+        "[{}] | Hidden:{} | Preview:{} | Sort:{} | Theme:{} | F10:Menu | Ctrl+Shift+P:Commands",
         entry_info, hidden_str, preview_str, sort_str, theme.name
     );
     f.render_widget(
@@ -892,6 +1078,71 @@ fn draw_ui(
             hints_area,
         );
     }
+}
+
+fn draw_about(theme: &Theme, area: Rect, f: &mut Frame) {
+    let block = Block::default()
+        .title(" About ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .style(Style::default().bg(theme.bg).fg(theme.fg));
+
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(&block, area);
+    let inner = block.inner(area);
+
+    let about_text = "Terminal File Explorer\n\nA terminal-based file manager\nbuilt with Rust and ratatui.\n\nPress Enter or Esc to close.";
+    f.render_widget(
+        Paragraph::new(about_text).style(Style::default().bg(theme.bg).fg(theme.fg)),
+        inner,
+    );
+}
+
+fn draw_keybindings(theme: &Theme, area: Rect, f: &mut Frame) {
+    let block = Block::default()
+        .title(" Keybindings ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .style(Style::default().bg(theme.bg).fg(theme.fg));
+
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(&block, area);
+    let inner = block.inner(area);
+
+    let bindings = vec![
+        "Navigation:",
+        "  Up/Down      - Move selection",
+        "  Enter        - Open dir/go into",
+        "  Left/BackTab - Go to parent dir",
+        "  Tab          - Toggle preview pane",
+        "",
+        "File Operations:",
+        "  Ctrl+N - New file",
+        "  Ctrl+R - Rename",
+        "  Delete  - Delete",
+        "  e       - Open in editor",
+        "",
+        "View:",
+        "  Ctrl+P - Toggle hidden files",
+        "  Ctrl+O - Cycle sort order",
+        "  Ctrl+T - Cycle theme",
+        "  F5      - Refresh",
+        "",
+        "Editor:",
+        "  Ctrl+S - Save  | Ctrl+Z - Undo",
+        "  Ctrl+Y - Redo  | Esc    - Close",
+        "",
+        "F10             - Menu bar",
+        "Ctrl+Shift+P   - Command palette",
+        "",
+        "Press Enter or Esc to close.",
+    ];
+
+    let text = bindings.join("\n");
+    f.render_widget(
+        Paragraph::new(text).style(Style::default().bg(theme.bg).fg(theme.fg)),
+        inner,
+    );
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1018,7 +1269,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         break;
                     }
-                    app.handle_key_event(key);
+                    let should_quit = app.handle_key_event(key);
+                    if should_quit {
+                        break;
+                    }
                 }
                 Event::Mouse(mouse) => {
                     app.handle_mouse_event(mouse);
@@ -1041,9 +1295,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 f.area(),
                 f,
             );
+
+            let menu_bar_area = Rect {
+                x: f.area().x,
+                y: f.area().y,
+                width: f.area().width,
+                height: 1,
+            };
+            menu::draw_menu_bar(&app.menu_bar, &app.theme, menu_bar_area, f);
+
             if app.dialog.dialog_type != DialogType::None {
                 let dialog_area = centered_rect(40, 20, f.area());
                 draw_dialog(&app.dialog, &app.theme, dialog_area, f);
+            }
+
+            if app.show_about {
+                let about_area = centered_rect(50, 30, f.area());
+                draw_about(&app.theme, about_area, f);
+            }
+
+            if app.show_keybindings {
+                let kb_area = centered_rect(50, 60, f.area());
+                draw_keybindings(&app.theme, kb_area, f);
+            }
+
+            if app.command_palette.active {
+                command_palette::draw_command_palette(
+                    &app.command_palette,
+                    &app.theme,
+                    f.area(),
+                    f,
+                );
             }
         })?;
     }
