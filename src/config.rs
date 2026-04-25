@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 
@@ -40,7 +39,7 @@ impl Config {
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 struct TomlConfig {
     theme: Option<String>,
     show_hidden: Option<bool>,

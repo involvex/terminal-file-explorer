@@ -18,7 +18,6 @@ pub struct Theme {
     pub editor_bg: Color,
     pub editor_fg: Color,
     pub error_fg: Color,
-    pub scrollbar: Color,
 }
 
 impl Theme {
@@ -72,7 +71,6 @@ fn tokyo_night() -> Theme {
         editor_bg: rgb(0x1a, 0x1b, 0x26),
         editor_fg: rgb(0xc0, 0xca, 0xf5),
         error_fg: rgb(0xf7, 0x76, 0x8e),
-        scrollbar: rgb(0x3b, 0x42, 0x61),
     }
 }
 
@@ -94,7 +92,6 @@ fn dracula() -> Theme {
         editor_bg: rgb(0x28, 0x2a, 0x36),
         editor_fg: rgb(0xf8, 0xf8, 0xf2),
         error_fg: rgb(0xff, 0x55, 0x55),
-        scrollbar: rgb(0x44, 0x47, 0x5a),
     }
 }
 
@@ -116,7 +113,6 @@ fn nord() -> Theme {
         editor_bg: rgb(0x2e, 0x34, 0x40),
         editor_fg: rgb(0xd8, 0xde, 0xe9),
         error_fg: rgb(0xbf, 0x61, 0x6a),
-        scrollbar: rgb(0x3b, 0x42, 0x52),
     }
 }
 
@@ -138,7 +134,6 @@ fn solarized_dark() -> Theme {
         editor_bg: rgb(0x00, 0x2b, 0x36),
         editor_fg: rgb(0x83, 0x94, 0x96),
         error_fg: rgb(0xdc, 0x32, 0x2f),
-        scrollbar: rgb(0x07, 0x36, 0x42),
     }
 }
 
@@ -160,7 +155,6 @@ fn catppuccin_mocha() -> Theme {
         editor_bg: rgb(0x1e, 0x1e, 0x2e),
         editor_fg: rgb(0xcd, 0xd6, 0xf4),
         error_fg: rgb(0xf3, 0x8b, 0xa8),
-        scrollbar: rgb(0x45, 0x47, 0x5a),
     }
 }
 
@@ -182,7 +176,6 @@ fn one_dark() -> Theme {
         editor_bg: rgb(0x28, 0x2c, 0x34),
         editor_fg: rgb(0xab, 0xb2, 0xbf),
         error_fg: rgb(0xe0, 0x6c, 0x75),
-        scrollbar: rgb(0x3e, 0x44, 0x51),
     }
 }
 
@@ -204,7 +197,6 @@ fn monokai() -> Theme {
         editor_bg: rgb(0x27, 0x28, 0x22),
         editor_fg: rgb(0xf8, 0xf8, 0xf2),
         error_fg: rgb(0xf9, 0x26, 0x72),
-        scrollbar: rgb(0x3e, 0x3d, 0x32),
     }
 }
 
@@ -226,6 +218,5 @@ fn gruvbox_dark() -> Theme {
         editor_bg: rgb(0x28, 0x28, 0x28),
         editor_fg: rgb(0xeb, 0xdb, 0xb2),
         error_fg: rgb(0xfb, 0x49, 0x34),
-        scrollbar: rgb(0x3c, 0x38, 0x36),
     }
 }

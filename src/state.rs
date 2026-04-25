@@ -84,10 +84,6 @@ pub struct AppState {
     pub sort_order: SortOrder,
     pub show_hidden: bool,
     pub preview_open: bool,
-    pub in_editor: bool,
-    pub editor_content: String,
-    pub editor_modified: bool,
-    pub editor_path: Option<PathBuf>,
 }
 
 impl AppState {
@@ -99,10 +95,6 @@ impl AppState {
             sort_order: SortOrder::Name,
             show_hidden: false,
             preview_open: false,
-            in_editor: false,
-            editor_content: String::new(),
-            editor_modified: false,
-            editor_path: None,
         }
     }
 
