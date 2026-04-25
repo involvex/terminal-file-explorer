@@ -8,7 +8,7 @@ mod theme;
 use config::Config;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
         MouseEvent, MouseEventKind,
     },
     execute,
