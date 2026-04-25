@@ -62,7 +62,7 @@ impl CommandPaletteState {
             CommandItem::new(
                 "Toggle Hidden Files",
                 "View",
-                "Ctrl+P",
+                "Ctrl+H",
                 MenuAction::ToggleHidden,
             ),
             CommandItem::new("Toggle Preview", "View", "Tab", MenuAction::TogglePreview),

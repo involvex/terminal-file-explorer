@@ -302,10 +302,10 @@ impl App {
             KeyCode::F(10) => {
                 self.menu_bar.open(0);
             }
-            KeyCode::Char('P')
-                if key.modifiers.contains(
-                    crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
-                ) =>
+            KeyCode::Char('p')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 self.command_palette.open();
             }
@@ -397,7 +397,7 @@ impl App {
             {
                 self.cycle_sort();
             }
-            KeyCode::Char('p')
+            KeyCode::Char('h')
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
@@ -686,6 +686,12 @@ impl App {
                             }
                             offset += menu_width + 1;
                         }
+                        self.menu_bar.close();
+                    } else if let Some(action) =
+                        self.menu_bar.handle_dropdown_click(mouse.row, mouse.column)
+                    {
+                        let _ = self.execute_action(action);
+                        return;
                     } else {
                         self.menu_bar.close();
                     }
@@ -971,7 +977,7 @@ fn draw_ui(
     };
     let preview_str = if state.preview_open { "ON" } else { "OFF" };
     let status_text = format!(
-        "[{}] | Hidden:{} | Preview:{} | Sort:{} | Theme:{} | F10:Menu | Ctrl+Shift+P:Commands",
+        "[{}] | Hidden:{}(Ctrl+H) | Preview:{}(Tab) | Sort:{} | Theme:{} | F10:Menu | Ctrl+P:Commands",
         entry_info, hidden_str, preview_str, sort_str, theme.name
     );
     f.render_widget(
@@ -1123,7 +1129,7 @@ fn draw_keybindings(theme: &Theme, area: Rect, f: &mut Frame) {
         "  e       - Open in editor",
         "",
         "View:",
-        "  Ctrl+P - Toggle hidden files",
+        "  Ctrl+H - Toggle hidden files",
         "  Ctrl+O - Cycle sort order",
         "  Ctrl+T - Cycle theme",
         "  F5      - Refresh",
@@ -1133,7 +1139,7 @@ fn draw_keybindings(theme: &Theme, area: Rect, f: &mut Frame) {
         "  Ctrl+Y - Redo  | Esc    - Close",
         "",
         "F10             - Menu bar",
-        "Ctrl+Shift+P   - Command palette",
+        "Ctrl+P         - Command palette",
         "",
         "Press Enter or Esc to close.",
     ];

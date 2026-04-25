@@ -95,7 +95,7 @@ impl MenuBarState {
         let view_menu = Menu {
             name: "View".to_string(),
             items: vec![
-                MenuItem::action("Toggle Hidden Files", "Ctrl+P", MenuAction::ToggleHidden),
+                MenuItem::action("Toggle Hidden Files", "Ctrl+H", MenuAction::ToggleHidden),
                 MenuItem::action("Toggle Preview", "Tab", MenuAction::TogglePreview),
                 MenuItem::action("Cycle Sort Order", "Ctrl+O", MenuAction::CycleSort),
                 MenuItem::action("Cycle Theme", "Ctrl+T", MenuAction::CycleTheme),
@@ -192,6 +192,64 @@ impl MenuBarState {
         None
     }
 
+    pub fn menu_bar_column_offset(&self, index: usize) -> u16 {
+        let mut offset: u16 = 0;
+        for (i, menu) in self.menus.iter().enumerate() {
+            if i == index {
+                return offset;
+            }
+            offset += menu.name.len() as u16 + 3;
+        }
+        offset
+    }
+
+    pub fn handle_dropdown_click(&mut self, row: u16, col: u16) -> Option<MenuAction> {
+        let open_idx = self.open_index?;
+        let menu = &self.menus[open_idx];
+        let menu_x = self.menu_bar_column_offset(open_idx);
+
+        let max_label_len: usize = menu
+            .items
+            .iter()
+            .map(|i| {
+                if i.separator {
+                    0
+                } else {
+                    i.label.len() + i.shortcut.len() + 4
+                }
+            })
+            .max()
+            .unwrap_or(10);
+        let dropdown_width = (max_label_len + 4).max(14) as u16;
+
+        if col < menu_x || col >= menu_x + dropdown_width {
+            self.close();
+            return None;
+        }
+
+        let dropdown_top: u16 = 1;
+        let inner_left: u16 = menu_x + 1;
+        let inner_right: u16 = menu_x + dropdown_width - 1;
+
+        if row <= dropdown_top || col < inner_left || col >= inner_right {
+            return None;
+        }
+
+        let item_row = row - dropdown_top - 1;
+        if item_row as usize >= menu.items.len() {
+            return None;
+        }
+
+        let item = &menu.items[item_row as usize];
+        if item.separator {
+            return None;
+        }
+
+        let action = item.action.clone();
+        self.close();
+        action
+    }
+
     pub fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Option<MenuAction> {
         use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -221,11 +279,7 @@ impl MenuBarState {
                 self.close();
                 action
             }
-            KeyCode::Char('p')
-                if key
-                    .modifiers
-                    .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
-            {
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.close();
                 Some(MenuAction::OpenCommandPalette)
             }
