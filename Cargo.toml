@@ -1,7 +1,9 @@
 [package]
 name = "terminal-file-explorer"
+authors = ["involvex"]
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/involvex/terminal-file-explorer"
 
 [dependencies]
 ratatui = "0.28"
