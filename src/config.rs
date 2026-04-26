@@ -5,6 +5,8 @@ pub struct Config {
     pub theme: String,
     pub show_hidden: bool,
     pub preview_enabled: bool,
+    pub calculate_dir_size: bool,
+    pub bookmarks: Vec<PathBuf>,
 }
 
 impl Default for Config {
@@ -13,6 +15,8 @@ impl Default for Config {
             theme: "tokyo-night".to_string(),
             show_hidden: false,
             preview_enabled: true,
+            calculate_dir_size: false,
+            bookmarks: Vec::new(),
         }
     }
 }
@@ -30,6 +34,8 @@ impl Config {
                             theme: config.theme.unwrap_or_else(|| "tokyo-night".to_string()),
                             show_hidden: config.show_hidden.unwrap_or(false),
                             preview_enabled: config.preview_enabled.unwrap_or(true),
+                            calculate_dir_size: config.calculate_dir_size.unwrap_or(false),
+                            bookmarks: config.bookmarks.unwrap_or_default(),
                         };
                     }
                 }
@@ -44,6 +50,8 @@ struct TomlConfig {
     theme: Option<String>,
     show_hidden: Option<bool>,
     preview_enabled: Option<bool>,
+    calculate_dir_size: Option<bool>,
+    bookmarks: Option<Vec<PathBuf>>,
 }
 
 pub fn get_config_dir() -> Option<PathBuf> {
@@ -66,6 +74,8 @@ pub fn save_config(config: &Config) -> Result<(), String> {
         theme: Some(config.theme.clone()),
         show_hidden: Some(config.show_hidden),
         preview_enabled: Some(config.preview_enabled),
+        calculate_dir_size: Some(config.calculate_dir_size),
+        bookmarks: Some(config.bookmarks.clone()),
     };
     let content = toml::to_string(&toml_config).map_err(|e| e.to_string())?;
     fs::write(config_path, content).map_err(|e| e.to_string())?;

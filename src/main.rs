@@ -26,6 +26,8 @@ use ratatui::{backend::CrosstermBackend, Frame, Terminal};
 use state::{AppState, SortOrder};
 use std::env;
 use std::path::PathBuf;
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
 use theme::Theme;
 
 struct App {
@@ -47,6 +49,10 @@ struct App {
     command_palette: CommandPaletteState,
     show_about: bool,
     show_keybindings: bool,
+    clipboard: Vec<PathBuf>,
+    clipboard_cut: bool,
+    syntax_set: SyntaxSet,
+    theme_set: ThemeSet,
 }
 
 impl App {
@@ -58,6 +64,7 @@ impl App {
 
         let mut state = AppState::new(cwd);
         state.show_hidden = config.show_hidden;
+        state.calculate_dir_size = config.calculate_dir_size;
         state.load_dir();
         let git_status = GitStatus::get_for_path(&state.cwd);
 
@@ -80,6 +87,10 @@ impl App {
             command_palette: CommandPaletteState::new(),
             show_about: false,
             show_keybindings: false,
+            clipboard: Vec::new(),
+            clipboard_cut: false,
+            syntax_set: SyntaxSet::load_defaults_newlines(),
+            theme_set: ThemeSet::load_defaults(),
         }
     }
 
@@ -190,10 +201,57 @@ impl App {
                 }
             }
             MenuAction::Delete => {
-                if self.state.selected_entry().is_some() {
+                if !self.state.selected_paths.is_empty() {
+                    self.dialog.show(DialogType::Delete);
+                    self.dialog.input = String::new();
+                } else if self.state.selected_entry().is_some() {
                     self.dialog.show(DialogType::Delete);
                     self.dialog.input = String::new();
                 }
+            }
+            MenuAction::Copy => {
+                self.clipboard = if !self.state.selected_paths.is_empty() {
+                    self.state.selected_paths.iter().cloned().collect()
+                } else if let Some(entry) = self.state.selected_entry() {
+                    vec![entry.path.clone()]
+                } else {
+                    Vec::new()
+                };
+                self.clipboard_cut = false;
+            }
+            MenuAction::Cut => {
+                self.clipboard = if !self.state.selected_paths.is_empty() {
+                    self.state.selected_paths.iter().cloned().collect()
+                } else if let Some(entry) = self.state.selected_entry() {
+                    vec![entry.path.clone()]
+                } else {
+                    Vec::new()
+                };
+                self.clipboard_cut = true;
+            }
+            MenuAction::Paste => {
+                if !self.clipboard.is_empty() {
+                    for path in &self.clipboard {
+                        let dest = self.state.cwd.join(path.file_name().unwrap());
+                        if self.clipboard_cut {
+                            let _ = fs::rename_path(path, &dest);
+                        } else {
+                            // TODO: Implement recursive copy in fs.rs
+                            // For now just basic file copy if possible
+                            if path.is_file() {
+                                let _ = std::fs::copy(path, &dest);
+                            }
+                        }
+                    }
+                    if self.clipboard_cut {
+                        self.clipboard.clear();
+                    }
+                    self.state.refresh();
+                    self.refresh_git_status();
+                }
+            }
+            MenuAction::ClearSelection => {
+                self.state.clear_selection();
             }
             MenuAction::Quit => {
                 return true;
@@ -249,8 +307,32 @@ impl App {
             MenuAction::ToggleGitDiff => {
                 self.state.show_git_diff = !self.state.show_git_diff;
             }
+            MenuAction::ToggleDirSize => {
+                self.state.calculate_dir_size = !self.state.calculate_dir_size;
+                self.config.calculate_dir_size = self.state.calculate_dir_size;
+                let _ = config::save_config(&self.config);
+                self.state.load_dir();
+            }
+            MenuAction::ToggleBookmark => {
+                let path = self.state.cwd.clone();
+                if self.config.bookmarks.contains(&path) {
+                    self.config.bookmarks.retain(|p| p != &path);
+                } else {
+                    self.config.bookmarks.push(path);
+                }
+                let _ = config::save_config(&self.config);
+            }
+            MenuAction::ShowBookmarks => {
+                self.command_palette.open_bookmarks(&self.config.bookmarks);
+            }
             MenuAction::JumpToFile(path) => {
-                self.state.select_by_path(&path);
+                if path.is_dir() {
+                    self.state.cwd = path;
+                    self.state.load_dir();
+                    self.refresh_git_status();
+                } else {
+                    self.state.select_by_path(&path);
+                }
             }
             MenuAction::JumpToLocation(path, line) => {
                 self.state.select_by_path_and_line(&path, line);
@@ -344,6 +426,30 @@ impl App {
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 self.state.show_git_diff = !self.state.show_git_diff;
+            }
+            KeyCode::Char('i')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                let _ = self.execute_action(MenuAction::ToggleDirSize);
+            }
+            KeyCode::Char('b')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                let _ = self.execute_action(MenuAction::ToggleBookmark);
+            }
+            KeyCode::Char('j')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                let _ = self.execute_action(MenuAction::ShowBookmarks);
+            }
+            KeyCode::Char(' ') => {
+                self.state.toggle_selection();
             }
             KeyCode::Up => {
                 if self.state.selected > 0 {
@@ -440,12 +546,37 @@ impl App {
             {
                 self.toggle_hidden();
             }
+            KeyCode::Char('c')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                let _ = self.execute_action(MenuAction::Copy);
+            }
+            KeyCode::Char('x')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                let _ = self.execute_action(MenuAction::Cut);
+            }
+            KeyCode::Char('v')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                let _ = self.execute_action(MenuAction::Paste);
+            }
             KeyCode::F(5) => {
                 self.state.refresh();
                 self.refresh_git_status();
             }
             KeyCode::Esc => {
-                self.cancel_dialog();
+                if self.state.selected_paths.is_empty() {
+                    self.cancel_dialog();
+                } else {
+                    self.state.clear_selection();
+                }
             }
             _ => {}
         }
@@ -684,15 +815,21 @@ impl App {
     }
 
     fn confirm_delete(&mut self) {
-        if let Some(entry) = self.state.selected_entry() {
-            if let Err(e) = fs::delete_path(&entry.path) {
-                self.dialog.error = Some(e);
-            } else {
-                self.dialog.hide();
-                self.state.refresh();
-                self.refresh_git_status();
-            }
+        let paths_to_delete: Vec<PathBuf> = if !self.state.selected_paths.is_empty() {
+            self.state.selected_paths.iter().cloned().collect()
+        } else if let Some(entry) = self.state.selected_entry() {
+            vec![entry.path.clone()]
+        } else {
+            Vec::new()
+        };
+
+        for path in paths_to_delete {
+            let _ = fs::delete_path(&path);
         }
+        self.state.clear_selection();
+        self.dialog.hide();
+        self.state.refresh();
+        self.refresh_git_status();
     }
 
     fn cancel_dialog(&mut self) {
@@ -817,11 +954,14 @@ fn draw_ui(
     git_status: Option<&GitStatus>,
     in_editor: bool,
     editor_content: &Vec<String>,
+    editor_path: Option<&PathBuf>,
     editor_modified: bool,
     cursor_line: usize,
     cursor_col: usize,
     scroll_offset: usize,
     theme: &Theme,
+    syntax_set: &SyntaxSet,
+    theme_set: &ThemeSet,
     area: Rect,
     f: &mut Frame,
 ) {
@@ -882,7 +1022,7 @@ fn draw_ui(
     let has_parent = state.cwd.parent().is_some();
     if has_parent {
         let is_selected = state.selected == 0;
-        let content = "\u{1F4C2} ..                                           <PARENT>";
+        let content = "    \u{1F4C2} ..                                           <PARENT>";
         let style = if is_selected {
             Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
         } else {
@@ -961,8 +1101,15 @@ fn draw_ui(
                     _ => "\u{1F4C4} ",
                 }
             };
+            let selection_marker = if state.selected_paths.contains(&entry.path) {
+                "[*] "
+            } else {
+                "    "
+            };
+
             let content = format!(
-                "{} {:<38} {:>8} {}",
+                "{}{} {:<34} {:>8} {}",
+                selection_marker,
                 icon,
                 entry.name,
                 entry.size_formatted(),
@@ -996,7 +1143,9 @@ fn draw_ui(
         SortOrder::Size => "Size",
         SortOrder::Modified => "Date",
     };
-    let entry_info = if let Some(entry) = state.selected_entry() {
+    let entry_info = if !state.selected_paths.is_empty() {
+        format!("{} selected", state.selected_paths.len())
+    } else if let Some(entry) = state.selected_entry() {
         format!(
             "{} | {} | {}",
             entry.name,
@@ -1038,22 +1187,27 @@ fn draw_ui(
             preview_rects[0],
         );
 
-        let (content, is_diff) = if let Some(entry) = state.selected_entry() {
+        let (preview_text, is_diff) = if let Some(entry) = state.selected_entry() {
             if state.show_git_diff {
-                (preview::get_git_diff_preview(&entry.path, &entry.name), true)
+                (
+                    ratatui::text::Text::from(preview::get_git_diff_preview(&entry.path, &entry.name)),
+                    true,
+                )
             } else {
                 (
-                    preview::get_preview_content(
+                    preview::get_preview_text(
                         &entry.path,
                         &entry.name,
                         (area.width / 2) as usize - 2,
                         area.height as usize - 2,
+                        syntax_set,
+                        theme_set,
                     ),
                     false,
                 )
             }
         } else {
-            ("No file selected".to_string(), false)
+            (ratatui::text::Text::from("No file selected"), false)
         };
 
         let preview_block = Block::default()
@@ -1062,29 +1216,26 @@ fn draw_ui(
         f.render_widget(preview_block, preview_rects[1]);
 
         if is_diff {
-            let lines: Vec<ratatui::text::Line> = content
-                .lines()
-                .map(|line| {
-                    let style = if line.starts_with('+') {
-                        Style::default().fg(ratatui::style::Color::Green)
-                    } else if line.starts_with('-') {
-                        Style::default().fg(ratatui::style::Color::Red)
-                    } else if line.starts_with('@') {
-                        Style::default().fg(ratatui::style::Color::Cyan)
-                    } else {
-                        Style::default().fg(theme.preview_fg)
-                    };
-                    ratatui::text::Line::styled(line, style)
-                })
-                .collect();
+            let mut lines = Vec::new();
+            for line_str in preview_text.to_string().lines() {
+                let style = if line_str.starts_with('+') {
+                    Style::default().fg(ratatui::style::Color::Green)
+                } else if line_str.starts_with('-') {
+                    Style::default().fg(ratatui::style::Color::Red)
+                } else if line_str.starts_with('@') {
+                    Style::default().fg(ratatui::style::Color::Cyan)
+                } else {
+                    Style::default().fg(theme.preview_fg)
+                };
+                lines.push(ratatui::text::Line::styled(line_str.to_string(), style));
+            }
             f.render_widget(
                 Paragraph::new(lines).style(Style::default().bg(theme.preview_bg)),
                 preview_rects[1],
             );
         } else {
             f.render_widget(
-                Paragraph::new(content)
-                    .style(Style::default().fg(theme.preview_fg).bg(theme.preview_bg)),
+                Paragraph::new(preview_text).style(Style::default().bg(theme.preview_bg)),
                 preview_rects[1],
             );
         }
@@ -1107,40 +1258,101 @@ fn draw_ui(
         let visible_lines = inner.height as usize;
         let width = inner.width as usize;
 
-        let mut editor_lines: Vec<String> = Vec::new();
+        let mut lines = Vec::new();
+
+        let syntax = editor_path
+            .and_then(|p| {
+                syntax_set.find_syntax_by_extension(p.extension().and_then(|e| e.to_str()).unwrap_or(""))
+            })
+            .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+
+        let syn_theme = &theme_set.themes["base16-ocean.dark"];
+        let mut h = syntect::easy::HighlightLines::new(syntax, syn_theme);
+
         for i in 0..visible_lines {
             let line_idx = scroll_offset + i;
             if line_idx < editor_content.len() {
-                let line = &editor_content[line_idx];
-                let display_line = if line.len() > width.saturating_sub(2) {
-                    format!("{}{}", &line[..width.saturating_sub(2)], "<")
-                } else {
-                    line.clone()
-                };
-                if line_idx == cursor_line {
-                    let mut line_with_cursor = String::new();
-                    for (j, ch) in display_line.chars().enumerate() {
-                        if j == cursor_col {
-                            line_with_cursor.push('|');
+                let line_str = &editor_content[line_idx];
+
+                let ranges: Vec<(syntect::highlighting::Style, &str)> =
+                    h.highlight_line(line_str, syntax_set).unwrap_or_default();
+
+                let mut spans = Vec::new();
+                let mut current_width = 0;
+
+                for (style, text) in ranges {
+                    if current_width >= width.saturating_sub(2) {
+                        break;
+                    }
+
+                    let available = width.saturating_sub(2) - current_width;
+                    let (display_text, _truncated) = if text.len() > available {
+                        (&text[..available], true)
+                    } else {
+                        (text, false)
+                    };
+
+                    let fg = ratatui::style::Color::Rgb(
+                        style.foreground.r,
+                        style.foreground.g,
+                        style.foreground.b,
+                    );
+
+                    // Handle cursor in this range
+                    let range_start = current_width;
+                    let range_end = current_width + display_text.chars().count();
+
+                    if line_idx == cursor_line && cursor_col >= range_start && cursor_col <= range_end {
+                        let mut local_spans = Vec::new();
+                        let mut local_idx = 0;
+                        for ch in display_text.chars() {
+                            if local_idx + range_start == cursor_col {
+                                local_spans.push(ratatui::text::Span::styled(
+                                    "|",
+                                    ratatui::style::Style::default().fg(ratatui::style::Color::White),
+                                ));
+                            }
+                            local_spans.push(ratatui::text::Span::styled(
+                                ch.to_string(),
+                                ratatui::style::Style::default().fg(fg),
+                            ));
+                            local_idx += 1;
                         }
-                        line_with_cursor.push(ch);
+                        if local_idx + range_start == cursor_col {
+                            local_spans.push(ratatui::text::Span::styled(
+                                "|",
+                                ratatui::style::Style::default().fg(ratatui::style::Color::White),
+                            ));
+                        }
+                        spans.extend(local_spans);
+                    } else {
+                        spans.push(ratatui::text::Span::styled(
+                            display_text.to_string(),
+                            ratatui::style::Style::default().fg(fg),
+                        ));
                     }
-                    if cursor_col >= display_line.len() {
-                        line_with_cursor.push('|');
-                    }
-                    editor_lines.push(line_with_cursor);
-                } else {
-                    editor_lines.push(display_line);
+
+                    current_width += display_text.chars().count();
                 }
+
+                if line_idx == cursor_line && cursor_col >= current_width {
+                     spans.push(ratatui::text::Span::styled(
+                        "|",
+                        ratatui::style::Style::default().fg(ratatui::style::Color::White),
+                    ));
+                }
+
+                lines.push(ratatui::text::Line::from(spans));
             } else {
-                editor_lines.push("~".to_string());
+                lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
+                    "~",
+                    ratatui::style::Style::default().fg(theme.border),
+                )));
             }
         }
 
-        let editor_text = editor_lines.join("\n");
         f.render_widget(
-            Paragraph::new(editor_text)
-                .style(Style::default().fg(theme.editor_fg).bg(theme.editor_bg)),
+            Paragraph::new(lines).style(Style::default().bg(theme.editor_bg)),
             inner,
         );
 
@@ -1193,28 +1405,26 @@ fn draw_keybindings(theme: &Theme, area: Rect, f: &mut Frame) {
         "  Enter        - Open dir/go into",
         "  Left/BackTab - Go to parent dir",
         "  Tab          - Toggle preview pane",
+        "  Space        - Toggle file selection",
         "",
         "File Operations:",
-        "  Ctrl+N - New file",
-        "  Ctrl+R - Rename",
-        "  Delete  - Delete",
-        "  e       - Open in editor",
+        "  Ctrl+N - New file | Ctrl+R - Rename",
+        "  Delete  - Delete   | e      - Open editor",
+        "  Ctrl+C - Copy     | Ctrl+X - Cut",
+        "  Ctrl+V - Paste    | Ctrl+B - Bookmark",
+        "  Ctrl+J - Jump to bookmark",
         "",
         "View:",
         "  Ctrl+H - Toggle hidden files",
         "  Ctrl+O - Cycle sort order",
         "  Ctrl+T - Cycle theme",
+        "  Ctrl+I - Toggle dir sizes",
+        "  Ctrl+D - Toggle Git diff",
         "  F5      - Refresh",
         "",
-        "Editor:",
-        "  Ctrl+S - Save  | Ctrl+Z - Undo",
-        "  Ctrl+Y - Redo  | Esc    - Close",
-        "",
-        "F10             - Menu bar",
-        "Ctrl+P         - Command palette",
-        "Ctrl+F         - File search",
-        "Ctrl+G         - Grep in Directory",
-        "Ctrl+D         - Toggle Git diff preview",
+        "F10     - Menu bar",
+        "Ctrl+P - Commands | Ctrl+F - Search",
+        "Ctrl+G - Grep",
         "",
         "Press Enter or Esc to close.",
     ];
@@ -1368,11 +1578,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.git_status.as_ref(),
                 app.in_editor,
                 &app.editor_content,
+                app.editor_path.as_ref(),
                 app.editor_modified,
                 app.cursor_line,
                 app.cursor_col,
                 app.scroll_offset,
                 &app.theme,
+                &app.syntax_set,
+                &app.theme_set,
                 f.area(),
                 f,
             );

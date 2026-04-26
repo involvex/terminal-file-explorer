@@ -11,6 +11,10 @@ pub enum MenuAction {
     NewFolder,
     Rename,
     Delete,
+    Copy,
+    Cut,
+    Paste,
+    ClearSelection,
     Quit,
     Undo,
     Redo,
@@ -27,6 +31,9 @@ pub enum MenuAction {
     OpenFileSearch,
     GrepInDir,
     ToggleGitDiff,
+    ToggleDirSize,
+    ToggleBookmark,
+    ShowBookmarks,
     JumpToFile(std::path::PathBuf),
     JumpToLocation(std::path::PathBuf, usize),
 }
@@ -96,6 +103,11 @@ impl MenuBarState {
                 MenuItem::separator(),
                 MenuItem::action("Undo", "Ctrl+Z", MenuAction::Undo),
                 MenuItem::action("Redo", "Ctrl+Y", MenuAction::Redo),
+                MenuItem::separator(),
+                MenuItem::action("Copy", "Ctrl+C", MenuAction::Copy),
+                MenuItem::action("Cut", "Ctrl+X", MenuAction::Cut),
+                MenuItem::action("Paste", "Ctrl+V", MenuAction::Paste),
+                MenuItem::action("Clear Selection", "Esc", MenuAction::ClearSelection),
             ],
         };
 
@@ -105,6 +117,9 @@ impl MenuBarState {
                 MenuItem::action("Toggle Hidden Files", "Ctrl+H", MenuAction::ToggleHidden),
                 MenuItem::action("Toggle Preview", "Tab", MenuAction::TogglePreview),
                 MenuItem::action("Toggle Git Diff", "Ctrl+D", MenuAction::ToggleGitDiff),
+                MenuItem::action("Toggle Directory Sizes", "Ctrl+I", MenuAction::ToggleDirSize),
+                MenuItem::action("Add/Remove Bookmark", "Ctrl+B", MenuAction::ToggleBookmark),
+                MenuItem::action("Show Bookmarks", "Ctrl+J", MenuAction::ShowBookmarks),
                 MenuItem::action("Cycle Sort Order", "Ctrl+O", MenuAction::CycleSort),
                 MenuItem::action("Cycle Theme", "Ctrl+T", MenuAction::CycleTheme),
                 MenuItem::separator(),
@@ -302,6 +317,14 @@ impl MenuBarState {
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.close();
                 Some(MenuAction::ToggleGitDiff)
+            }
+            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.close();
+                Some(MenuAction::ToggleBookmark)
+            }
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.close();
+                Some(MenuAction::ShowBookmarks)
             }
             KeyCode::F(10) => {
                 self.close();

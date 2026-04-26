@@ -20,10 +20,17 @@ A terminal file explorer built with Rust and ratatui.
 | `Backspace` or `←` | Go to parent directory |
 | `Tab` | Toggle preview pane |
 | `e` | Open file in editor |
+| `Space` | Toggle file selection |
 | `Ctrl+F` | Fuzzy file search |
 | `Ctrl+G` | Grep in directory |
 | `Ctrl+D` | Toggle Git diff preview |
+| `Ctrl+I` | Toggle directory sizes |
+| `Ctrl+B` | Add/remove bookmark |
+| `Ctrl+J` | Jump to bookmark |
 | `Ctrl+P` | Command palette |
+| `Ctrl+C` | Copy selected |
+| `Ctrl+X` | Cut selected |
+| `Ctrl+V` | Paste selected |
 | `Ctrl+S` | Save (in editor) |
 | `Ctrl+Z` | Undo (in editor) |
 | `Ctrl+Y` | Redo (in editor) |
@@ -35,7 +42,7 @@ A terminal file explorer built with Rust and ratatui.
 | `Delete` | Delete file/folder |
 | `F5` | Refresh directory |
 | `F10` | Open menu bar |
-| `Esc` | Close dialog/editor |
+| `Esc` | Close dialog/Clear selection |
 | `Ctrl+Q` | Quit (via menu) |
 
 ### Mouse

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -29,10 +30,13 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
-    pub fn from_path(path: &Path) -> Self {
+    pub fn from_path(path: &Path, calculate_dir_size: bool) -> Self {
         let metadata = fs::metadata(path);
         let is_dir = path.is_dir();
-        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mut size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        if is_dir && calculate_dir_size {
+            size = crate::fs::get_dir_size(&path.to_path_buf());
+        }
         let modified = metadata.as_ref().ok().and_then(|m| m.modified().ok());
 
         Self {
@@ -85,6 +89,8 @@ pub struct AppState {
     pub show_hidden: bool,
     pub preview_open: bool,
     pub show_git_diff: bool,
+    pub calculate_dir_size: bool,
+    pub selected_paths: HashSet<PathBuf>,
 }
 
 impl AppState {
@@ -97,6 +103,8 @@ impl AppState {
             show_hidden: false,
             preview_open: false,
             show_git_diff: false,
+            calculate_dir_size: false,
+            selected_paths: HashSet::new(),
         }
     }
 
@@ -113,7 +121,7 @@ impl AppState {
                 if !self.show_hidden && file_name.starts_with('.') {
                     continue;
                 }
-                let file_entry = FileEntry::from_path(&entry.path());
+                let file_entry = FileEntry::from_path(&entry.path(), self.calculate_dir_size);
                 self.entries.push(file_entry);
             }
         }
@@ -194,6 +202,24 @@ impl AppState {
 
     pub fn is_parent_selected(&self) -> bool {
         self.cwd.parent().is_some() && self.selected == 0
+    }
+
+    pub fn toggle_selection(&mut self) {
+        if self.is_parent_selected() {
+            return;
+        }
+        let path = self.selected_entry().map(|e| e.path.clone());
+        if let Some(path) = path {
+            if self.selected_paths.contains(&path) {
+                self.selected_paths.remove(&path);
+            } else {
+                self.selected_paths.insert(path);
+            }
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected_paths.clear();
     }
 
     pub fn select_by_path(&mut self, path: &Path) {

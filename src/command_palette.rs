@@ -12,6 +12,7 @@ pub enum CommandPaletteMode {
     Actions,
     Files,
     Grep,
+    Bookmarks,
 }
 
 #[derive(Debug, Clone)]
@@ -62,8 +63,14 @@ impl CommandPaletteState {
         let all_items = vec![
             CommandItem::new("New File", "File", "Ctrl+N", MenuAction::NewFile),
             CommandItem::new("New Folder", "File", "", MenuAction::NewFolder),
+            CommandItem::new("Search Files", "File", "Ctrl+F", MenuAction::OpenFileSearch),
+            CommandItem::new("Grep in Directory", "File", "Ctrl+G", MenuAction::GrepInDir),
             CommandItem::new("Rename", "File", "Ctrl+R", MenuAction::Rename),
             CommandItem::new("Delete", "File", "Del", MenuAction::Delete),
+            CommandItem::new("Copy", "Edit", "Ctrl+C", MenuAction::Copy),
+            CommandItem::new("Cut", "Edit", "Ctrl+X", MenuAction::Cut),
+            CommandItem::new("Paste", "Edit", "Ctrl+V", MenuAction::Paste),
+            CommandItem::new("Clear Selection", "Edit", "Esc", MenuAction::ClearSelection),
             CommandItem::new("Quit", "File", "Ctrl+Q", MenuAction::Quit),
             CommandItem::new("Open in Editor", "Edit", "e", MenuAction::OpenEditor),
             CommandItem::new("Undo", "Edit", "Ctrl+Z", MenuAction::Undo),
@@ -76,6 +83,9 @@ impl CommandPaletteState {
             ),
             CommandItem::new("Toggle Preview", "View", "Tab", MenuAction::TogglePreview),
             CommandItem::new("Toggle Git Diff", "View", "Ctrl+D", MenuAction::ToggleGitDiff),
+            CommandItem::new("Toggle Directory Sizes", "View", "Ctrl+I", MenuAction::ToggleDirSize),
+            CommandItem::new("Add/Remove Bookmark", "View", "Ctrl+B", MenuAction::ToggleBookmark),
+            CommandItem::new("Show Bookmarks", "View", "Ctrl+J", MenuAction::ShowBookmarks),
             CommandItem::new("Cycle Sort Order", "View", "Ctrl+O", MenuAction::CycleSort),
             CommandItem::new("Cycle Theme", "View", "Ctrl+T", MenuAction::CycleTheme),
             CommandItem::new("Refresh", "View", "F5", MenuAction::Refresh),
@@ -126,6 +136,24 @@ impl CommandPaletteState {
         self.mode = CommandPaletteMode::Grep;
         self.query.clear();
         self.filtered.clear();
+        self.selected = 0;
+    }
+
+    pub fn open_bookmarks(&mut self, bookmarks: &[std::path::PathBuf]) {
+        self.active = true;
+        self.mode = CommandPaletteMode::Bookmarks;
+        self.query.clear();
+        self.filtered = bookmarks
+            .iter()
+            .map(|path| {
+                CommandItem::new(
+                    &path.to_string_lossy(),
+                    "Bookmark",
+                    "",
+                    MenuAction::JumpToFile(path.clone()),
+                )
+            })
+            .collect();
         self.selected = 0;
     }
 
@@ -284,6 +312,7 @@ pub fn draw_command_palette(state: &CommandPaletteState, theme: &Theme, area: Re
             CommandPaletteMode::Actions => " Command Palette ",
             CommandPaletteMode::Files => " File Search ",
             CommandPaletteMode::Grep => " Grep in Directory ",
+            CommandPaletteMode::Bookmarks => " Bookmarks ",
         });
 
     f.render_widget(&input_block, chunks[0]);
