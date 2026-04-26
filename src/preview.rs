@@ -1,11 +1,11 @@
+use crate::git::GitStatus;
+use ratatui::style::{Color as RatatuiColor, Style};
+use ratatui::text::{Line, Span, Text};
 use std::fs;
 use std::path::Path;
-use crate::git::GitStatus;
-use syntect::parsing::SyntaxSet;
-use syntect::highlighting::ThemeSet;
 use syntect::easy::HighlightLines;
-use ratatui::text::{Line, Span, Text};
-use ratatui::style::{Style, Color as RatatuiColor};
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
 
 pub fn get_preview_text<'a>(
     path: &Path,
@@ -44,32 +44,37 @@ fn preview_highlighted<'a>(
         let syntax = syntax_set
             .find_syntax_by_extension(path.extension().and_then(|e| e.to_str()).unwrap_or(""))
             .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
-        
+
         let theme = &theme_set.themes["base16-ocean.dark"];
         let mut h = HighlightLines::new(syntax, theme);
-        
+
         let mut lines = Vec::new();
         for line_str in content.lines().take(max_height) {
-            let ranges: Vec<(syntect::highlighting::Style, &str)> = h.highlight_line(line_str, syntax_set).unwrap_or_default();
+            let ranges: Vec<(syntect::highlighting::Style, &str)> =
+                h.highlight_line(line_str, syntax_set).unwrap_or_default();
             let mut spans = Vec::new();
             let mut current_width = 0;
-            
+
             for (style, text) in ranges {
                 if current_width >= max_width {
                     break;
                 }
-                
+
                 let available = max_width - current_width;
                 let (display_text, truncated) = if text.len() > available {
                     (&text[..available], true)
                 } else {
                     (text, false)
                 };
-                
-                let fg = RatatuiColor::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
-                spans.push(Span::styled(display_text.to_string(), Style::default().fg(fg)));
+
+                let fg =
+                    RatatuiColor::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
+                spans.push(Span::styled(
+                    display_text.to_string(),
+                    Style::default().fg(fg),
+                ));
                 current_width += display_text.len();
-                
+
                 if truncated {
                     break;
                 }

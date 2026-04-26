@@ -232,7 +232,7 @@ impl AppState {
     }
 
     pub fn select_by_path_and_line(&mut self, path: &Path, _line: usize) {
-        // For now, just select the file. 
+        // For now, just select the file.
         // In the future, we could pass the line number to the editor if it opens.
         self.select_by_path(path);
     }

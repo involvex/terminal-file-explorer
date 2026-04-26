@@ -343,7 +343,9 @@ impl App {
 
     fn handle_key_event(&mut self, key: KeyEvent) -> bool {
         if self.command_palette.active {
-            let result = self.command_palette.handle_key_event(key, &self.state.entries);
+            let result = self
+                .command_palette
+                .handle_key_event(key, &self.state.entries);
             match result {
                 CommandPaletteResult::Action(action) => {
                     return self.execute_action(action);
@@ -1183,14 +1185,18 @@ fn draw_ui(
             " Preview "
         };
         f.render_widget(
-            Paragraph::new(preview_title).style(Style::default().fg(theme.title).bg(theme.status_bg)),
+            Paragraph::new(preview_title)
+                .style(Style::default().fg(theme.title).bg(theme.status_bg)),
             preview_rects[0],
         );
 
         let (preview_text, is_diff) = if let Some(entry) = state.selected_entry() {
             if state.show_git_diff {
                 (
-                    ratatui::text::Text::from(preview::get_git_diff_preview(&entry.path, &entry.name)),
+                    ratatui::text::Text::from(preview::get_git_diff_preview(
+                        &entry.path,
+                        &entry.name,
+                    )),
                     true,
                 )
             } else {
@@ -1262,7 +1268,8 @@ fn draw_ui(
 
         let syntax = editor_path
             .and_then(|p| {
-                syntax_set.find_syntax_by_extension(p.extension().and_then(|e| e.to_str()).unwrap_or(""))
+                syntax_set
+                    .find_syntax_by_extension(p.extension().and_then(|e| e.to_str()).unwrap_or(""))
             })
             .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
 
@@ -1302,14 +1309,18 @@ fn draw_ui(
                     let range_start = current_width;
                     let range_end = current_width + display_text.chars().count();
 
-                    if line_idx == cursor_line && cursor_col >= range_start && cursor_col <= range_end {
+                    if line_idx == cursor_line
+                        && cursor_col >= range_start
+                        && cursor_col <= range_end
+                    {
                         let mut local_spans = Vec::new();
                         let mut local_idx = 0;
                         for ch in display_text.chars() {
                             if local_idx + range_start == cursor_col {
                                 local_spans.push(ratatui::text::Span::styled(
                                     "|",
-                                    ratatui::style::Style::default().fg(ratatui::style::Color::White),
+                                    ratatui::style::Style::default()
+                                        .fg(ratatui::style::Color::White),
                                 ));
                             }
                             local_spans.push(ratatui::text::Span::styled(
@@ -1336,7 +1347,7 @@ fn draw_ui(
                 }
 
                 if line_idx == cursor_line && cursor_col >= current_width {
-                     spans.push(ratatui::text::Span::styled(
+                    spans.push(ratatui::text::Span::styled(
                         "|",
                         ratatui::style::Style::default().fg(ratatui::style::Color::White),
                     ));

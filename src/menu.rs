@@ -117,7 +117,11 @@ impl MenuBarState {
                 MenuItem::action("Toggle Hidden Files", "Ctrl+H", MenuAction::ToggleHidden),
                 MenuItem::action("Toggle Preview", "Tab", MenuAction::TogglePreview),
                 MenuItem::action("Toggle Git Diff", "Ctrl+D", MenuAction::ToggleGitDiff),
-                MenuItem::action("Toggle Directory Sizes", "Ctrl+I", MenuAction::ToggleDirSize),
+                MenuItem::action(
+                    "Toggle Directory Sizes",
+                    "Ctrl+I",
+                    MenuAction::ToggleDirSize,
+                ),
                 MenuItem::action("Add/Remove Bookmark", "Ctrl+B", MenuAction::ToggleBookmark),
                 MenuItem::action("Show Bookmarks", "Ctrl+J", MenuAction::ShowBookmarks),
                 MenuItem::action("Cycle Sort Order", "Ctrl+O", MenuAction::CycleSort),
