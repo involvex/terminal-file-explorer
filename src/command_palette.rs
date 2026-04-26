@@ -5,6 +5,14 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::Frame;
 
 use crate::menu::MenuAction;
+use crate::state::FileEntry;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CommandPaletteMode {
+    Actions,
+    Files,
+    Grep,
+}
 
 #[derive(Debug, Clone)]
 pub struct CommandItem {
@@ -46,6 +54,7 @@ pub struct CommandPaletteState {
     pub filtered: Vec<CommandItem>,
     pub selected: usize,
     pub active: bool,
+    pub mode: CommandPaletteMode,
 }
 
 impl CommandPaletteState {
@@ -66,6 +75,7 @@ impl CommandPaletteState {
                 MenuAction::ToggleHidden,
             ),
             CommandItem::new("Toggle Preview", "View", "Tab", MenuAction::TogglePreview),
+            CommandItem::new("Toggle Git Diff", "View", "Ctrl+D", MenuAction::ToggleGitDiff),
             CommandItem::new("Cycle Sort Order", "View", "Ctrl+O", MenuAction::CycleSort),
             CommandItem::new("Cycle Theme", "View", "Ctrl+T", MenuAction::CycleTheme),
             CommandItem::new("Refresh", "View", "F5", MenuAction::Refresh),
@@ -81,14 +91,75 @@ impl CommandPaletteState {
             filtered,
             selected: 0,
             active: false,
+            mode: CommandPaletteMode::Actions,
         }
     }
 
-    pub fn open(&mut self) {
+    pub fn open_actions(&mut self) {
         self.active = true;
+        self.mode = CommandPaletteMode::Actions;
         self.query.clear();
         self.filtered = self.all_items.clone();
         self.selected = 0;
+    }
+
+    pub fn open_files(&mut self, entries: &[FileEntry]) {
+        self.active = true;
+        self.mode = CommandPaletteMode::Files;
+        self.query.clear();
+        self.filtered = entries
+            .iter()
+            .map(|entry| {
+                CommandItem::new(
+                    &entry.name,
+                    if entry.is_dir { "Dir" } else { "File" },
+                    "",
+                    MenuAction::JumpToFile(entry.path.clone()),
+                )
+            })
+            .collect();
+        self.selected = 0;
+    }
+
+    pub fn open_grep(&mut self) {
+        self.active = true;
+        self.mode = CommandPaletteMode::Grep;
+        self.query.clear();
+        self.filtered.clear();
+        self.selected = 0;
+    }
+
+    pub fn grep_dir(&mut self, entries: &[FileEntry]) {
+        if self.query.is_empty() {
+            self.filtered.clear();
+            return;
+        }
+
+        let mut results = Vec::new();
+        let query_lower = self.query.to_lowercase();
+
+        for entry in entries {
+            if entry.is_dir {
+                continue;
+            }
+
+            if let Ok(content) = std::fs::read_to_string(&entry.path) {
+                for (i, line) in content.lines().enumerate() {
+                    if line.to_lowercase().contains(&query_lower) {
+                        results.push(CommandItem::new(
+                            line.trim(),
+                            &entry.name,
+                            &format!("L{}", i + 1),
+                            MenuAction::JumpToLocation(entry.path.clone(), i),
+                        ));
+                    }
+                }
+            }
+        }
+        self.filtered = results;
+        if self.selected >= self.filtered.len() {
+            self.selected = self.filtered.len().saturating_sub(1);
+        }
     }
 
     pub fn close(&mut self) {
@@ -96,8 +167,10 @@ impl CommandPaletteState {
         self.query.clear();
     }
 
-    pub fn update_query(&mut self) {
-        if self.query.is_empty() {
+    pub fn update_query(&mut self, entries: &[FileEntry]) {
+        if self.mode == CommandPaletteMode::Grep {
+            self.grep_dir(entries);
+        } else if self.query.is_empty() {
             self.filtered = self.all_items.clone();
         } else {
             self.filtered = self
@@ -128,7 +201,11 @@ impl CommandPaletteState {
         self.filtered.get(self.selected).map(|i| i.action.clone())
     }
 
-    pub fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> CommandPaletteResult {
+    pub fn handle_key_event(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+        entries: &[FileEntry],
+    ) -> CommandPaletteResult {
         use crossterm::event::{KeyCode, KeyModifiers};
 
         match key.code {
@@ -155,7 +232,7 @@ impl CommandPaletteState {
             }
             KeyCode::Backspace => {
                 self.query.pop();
-                self.update_query();
+                self.update_query(entries);
                 CommandPaletteResult::Continue
             }
             KeyCode::Char(c)
@@ -164,7 +241,7 @@ impl CommandPaletteState {
                     .contains(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 self.query.push(c);
-                self.update_query();
+                self.update_query(entries);
                 CommandPaletteResult::Continue
             }
             _ => CommandPaletteResult::Continue,
@@ -203,7 +280,11 @@ pub fn draw_command_palette(state: &CommandPaletteState, theme: &Theme, area: Re
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.palette_selected_bg))
         .style(Style::default().bg(theme.palette_bg).fg(theme.palette_fg))
-        .title(" Command Palette ");
+        .title(match state.mode {
+            CommandPaletteMode::Actions => " Command Palette ",
+            CommandPaletteMode::Files => " File Search ",
+            CommandPaletteMode::Grep => " Grep in Directory ",
+        });
 
     f.render_widget(&input_block, chunks[0]);
     let input_inner = input_block.inner(chunks[0]);

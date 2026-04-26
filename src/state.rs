@@ -84,6 +84,7 @@ pub struct AppState {
     pub sort_order: SortOrder,
     pub show_hidden: bool,
     pub preview_open: bool,
+    pub show_git_diff: bool,
 }
 
 impl AppState {
@@ -95,6 +96,7 @@ impl AppState {
             sort_order: SortOrder::Name,
             show_hidden: false,
             preview_open: false,
+            show_git_diff: false,
         }
     }
 
@@ -192,5 +194,20 @@ impl AppState {
 
     pub fn is_parent_selected(&self) -> bool {
         self.cwd.parent().is_some() && self.selected == 0
+    }
+
+    pub fn select_by_path(&mut self, path: &Path) {
+        let has_parent = self.cwd.parent().is_some();
+        let base_offset = if has_parent { 1 } else { 0 };
+
+        if let Some(pos) = self.entries.iter().position(|e| e.path == path) {
+            self.selected = pos + base_offset;
+        }
+    }
+
+    pub fn select_by_path_and_line(&mut self, path: &Path, _line: usize) {
+        // For now, just select the file. 
+        // In the future, we could pass the line number to the editor if it opens.
+        self.select_by_path(path);
     }
 }

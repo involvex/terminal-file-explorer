@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use crate::git::GitStatus;
 
 pub fn get_preview_content(path: &Path, name: &str, max_width: usize, max_height: usize) -> String {
     let extension = name.split('.').last().unwrap_or("").to_lowercase();
@@ -63,4 +64,16 @@ fn preview_audio(path: &Path) -> String {
 
 fn preview_pdf(path: &Path) -> String {
     format!("[PDF: {}]", path.display())
+}
+
+pub fn get_git_diff_preview(path: &Path, name: &str) -> String {
+    if let Some(diff) = GitStatus::get_file_diff(path, name) {
+        if diff.is_empty() {
+            "No changes.".to_string()
+        } else {
+            diff
+        }
+    } else {
+        "[No Git diff available]".to_string()
+    }
 }

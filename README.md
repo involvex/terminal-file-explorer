@@ -19,19 +19,24 @@ A terminal file explorer built with Rust and ratatui.
 | `Enter` | Open directory / Go back on `..` |
 | `Backspace` or `←` | Go to parent directory |
 | `Tab` | Toggle preview pane |
-| `Ctrl+E` | Open file in editor |
+| `e` | Open file in editor |
+| `Ctrl+F` | Fuzzy file search |
+| `Ctrl+G` | Grep in directory |
+| `Ctrl+D` | Toggle Git diff preview |
+| `Ctrl+P` | Command palette |
 | `Ctrl+S` | Save (in editor) |
 | `Ctrl+Z` | Undo (in editor) |
 | `Ctrl+Y` | Redo (in editor) |
 | `Ctrl+T` | Cycle theme |
 | `Ctrl+O` | Cycle sort order |
-| `Ctrl+P` | Toggle hidden files |
+| `Ctrl+H` | Toggle hidden files |
 | `Ctrl+N` | Create new file |
 | `Ctrl+R` | Rename file/folder |
 | `Delete` | Delete file/folder |
 | `F5` | Refresh directory |
+| `F10` | Open menu bar |
 | `Esc` | Close dialog/editor |
-| `Ctrl+C` | Quit |
+| `Ctrl+Q` | Quit (via menu) |
 
 ### Mouse
 

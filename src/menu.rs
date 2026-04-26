@@ -24,6 +24,11 @@ pub enum MenuAction {
     ShowKeybindings,
     ShowAbout,
     OpenCommandPalette,
+    OpenFileSearch,
+    GrepInDir,
+    ToggleGitDiff,
+    JumpToFile(std::path::PathBuf),
+    JumpToLocation(std::path::PathBuf, usize),
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +79,8 @@ impl MenuBarState {
             items: vec![
                 MenuItem::action("New File", "Ctrl+N", MenuAction::NewFile),
                 MenuItem::action("New Folder", "", MenuAction::NewFolder),
+                MenuItem::action("Search Files", "Ctrl+F", MenuAction::OpenFileSearch),
+                MenuItem::action("Grep in Directory", "Ctrl+G", MenuAction::GrepInDir),
                 MenuItem::separator(),
                 MenuItem::action("Rename", "Ctrl+R", MenuAction::Rename),
                 MenuItem::action("Delete", "Del", MenuAction::Delete),
@@ -97,6 +104,7 @@ impl MenuBarState {
             items: vec![
                 MenuItem::action("Toggle Hidden Files", "Ctrl+H", MenuAction::ToggleHidden),
                 MenuItem::action("Toggle Preview", "Tab", MenuAction::TogglePreview),
+                MenuItem::action("Toggle Git Diff", "Ctrl+D", MenuAction::ToggleGitDiff),
                 MenuItem::action("Cycle Sort Order", "Ctrl+O", MenuAction::CycleSort),
                 MenuItem::action("Cycle Theme", "Ctrl+T", MenuAction::CycleTheme),
                 MenuItem::separator(),
@@ -282,6 +290,18 @@ impl MenuBarState {
             KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.close();
                 Some(MenuAction::OpenCommandPalette)
+            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.close();
+                Some(MenuAction::OpenFileSearch)
+            }
+            KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.close();
+                Some(MenuAction::GrepInDir)
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.close();
+                Some(MenuAction::ToggleGitDiff)
             }
             KeyCode::F(10) => {
                 self.close();

@@ -47,6 +47,21 @@ impl GitStatus {
         }
         FileGitStatus::Unmodified
     }
+
+    pub fn get_file_diff(path: &Path, filename: &str) -> Option<String> {
+        let repo_root = find_repo_root(path)?;
+        let output = Command::new("git")
+            .args(["diff", filename])
+            .current_dir(&repo_root)
+            .output()
+            .ok()?;
+
+        if output.status.success() {
+            Some(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            None
+        }
+    }
 }
 
 fn find_repo_root(path: &Path) -> Option<String> {

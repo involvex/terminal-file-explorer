@@ -238,7 +238,22 @@ impl App {
                 self.show_about = true;
             }
             MenuAction::OpenCommandPalette => {
-                self.command_palette.open();
+                self.command_palette.open_actions();
+            }
+            MenuAction::OpenFileSearch => {
+                self.command_palette.open_files(&self.state.entries);
+            }
+            MenuAction::GrepInDir => {
+                self.command_palette.open_grep();
+            }
+            MenuAction::ToggleGitDiff => {
+                self.state.show_git_diff = !self.state.show_git_diff;
+            }
+            MenuAction::JumpToFile(path) => {
+                self.state.select_by_path(&path);
+            }
+            MenuAction::JumpToLocation(path, line) => {
+                self.state.select_by_path_and_line(&path, line);
             }
         }
         false
@@ -246,7 +261,7 @@ impl App {
 
     fn handle_key_event(&mut self, key: KeyEvent) -> bool {
         if self.command_palette.active {
-            let result = self.command_palette.handle_key_event(key);
+            let result = self.command_palette.handle_key_event(key, &self.state.entries);
             match result {
                 CommandPaletteResult::Action(action) => {
                     return self.execute_action(action);
@@ -307,7 +322,28 @@ impl App {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.command_palette.open();
+                self.command_palette.open_actions();
+            }
+            KeyCode::Char('f')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.command_palette.open_files(&self.state.entries);
+            }
+            KeyCode::Char('g')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.command_palette.open_grep();
+            }
+            KeyCode::Char('d')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.state.show_git_diff = !self.state.show_git_diff;
             }
             KeyCode::Up => {
                 if self.state.selected > 0 {
@@ -977,7 +1013,7 @@ fn draw_ui(
     };
     let preview_str = if state.preview_open { "ON" } else { "OFF" };
     let status_text = format!(
-        "[{}] | Hidden:{}(Ctrl+H) | Preview:{}(Tab) | Sort:{} | Theme:{} | F10:Menu | Ctrl+P:Commands",
+        "[{}] | Hidden:{}(Ctrl+H) | Preview:{}(Tab) | Sort:{} | Theme:{} | F10:Menu | Ctrl+P:Cmd | Ctrl+F:Search | Ctrl+G:Grep | Ctrl+D:Diff",
         entry_info, hidden_str, preview_str, sort_str, theme.name
     );
     f.render_widget(
@@ -992,30 +1028,66 @@ fn draw_ui(
         )
         .split(preview_area);
 
+        let preview_title = if state.show_git_diff {
+            " Git Diff "
+        } else {
+            " Preview "
+        };
         f.render_widget(
-            Paragraph::new(" Preview ").style(Style::default().fg(theme.title).bg(theme.status_bg)),
+            Paragraph::new(preview_title).style(Style::default().fg(theme.title).bg(theme.status_bg)),
             preview_rects[0],
         );
 
-        let content = if let Some(entry) = state.selected_entry() {
-            preview::get_preview_content(
-                &entry.path,
-                &entry.name,
-                (area.width / 2) as usize - 2,
-                area.height as usize - 2,
-            )
+        let (content, is_diff) = if let Some(entry) = state.selected_entry() {
+            if state.show_git_diff {
+                (preview::get_git_diff_preview(&entry.path, &entry.name), true)
+            } else {
+                (
+                    preview::get_preview_content(
+                        &entry.path,
+                        &entry.name,
+                        (area.width / 2) as usize - 2,
+                        area.height as usize - 2,
+                    ),
+                    false,
+                )
+            }
         } else {
-            "No file selected".to_string()
+            ("No file selected".to_string(), false)
         };
+
         let preview_block = Block::default()
             .borders(Borders::ALL)
             .border_style(theme.border);
         f.render_widget(preview_block, preview_rects[1]);
-        f.render_widget(
-            Paragraph::new(content)
-                .style(Style::default().fg(theme.preview_fg).bg(theme.preview_bg)),
-            preview_rects[1],
-        );
+
+        if is_diff {
+            let lines: Vec<ratatui::text::Line> = content
+                .lines()
+                .map(|line| {
+                    let style = if line.starts_with('+') {
+                        Style::default().fg(ratatui::style::Color::Green)
+                    } else if line.starts_with('-') {
+                        Style::default().fg(ratatui::style::Color::Red)
+                    } else if line.starts_with('@') {
+                        Style::default().fg(ratatui::style::Color::Cyan)
+                    } else {
+                        Style::default().fg(theme.preview_fg)
+                    };
+                    ratatui::text::Line::styled(line, style)
+                })
+                .collect();
+            f.render_widget(
+                Paragraph::new(lines).style(Style::default().bg(theme.preview_bg)),
+                preview_rects[1],
+            );
+        } else {
+            f.render_widget(
+                Paragraph::new(content)
+                    .style(Style::default().fg(theme.preview_fg).bg(theme.preview_bg)),
+                preview_rects[1],
+            );
+        }
     }
 
     if in_editor {
@@ -1140,6 +1212,9 @@ fn draw_keybindings(theme: &Theme, area: Rect, f: &mut Frame) {
         "",
         "F10             - Menu bar",
         "Ctrl+P         - Command palette",
+        "Ctrl+F         - File search",
+        "Ctrl+G         - Grep in Directory",
+        "Ctrl+D         - Toggle Git diff preview",
         "",
         "Press Enter or Esc to close.",
     ];
