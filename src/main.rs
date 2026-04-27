@@ -950,22 +950,33 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     .split(popup[1])[1]
 }
 
-fn draw_ui(
-    state: &AppState,
-    git_status: Option<&GitStatus>,
-    in_editor: bool,
-    editor_content: &[String],
-    editor_path: Option<&PathBuf>,
-    editor_modified: bool,
+struct EditorInfo<'a> {
+    content: &'a [String],
+    path: Option<&'a PathBuf>,
+    modified: bool,
     cursor_line: usize,
     cursor_col: usize,
     scroll_offset: usize,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_ui(
+    state: &AppState,
+    git_status: Option<&GitStatus>,
+    editor: Option<&EditorInfo<'_>>,
     theme: &Theme,
     syntax_set: &SyntaxSet,
     theme_set: &ThemeSet,
     area: Rect,
     f: &mut Frame,
 ) {
+    let in_editor = editor.is_some();
+    let editor_content = editor.map(|e| e.content).unwrap_or(&[]);
+    let editor_path = editor.and_then(|e| e.path);
+    let editor_modified = editor.map(|e| e.modified).unwrap_or(false);
+    let cursor_line = editor.map(|e| e.cursor_line).unwrap_or(0);
+    let cursor_col = editor.map(|e| e.cursor_col).unwrap_or(0);
+    let scroll_offset = editor.map(|e| e.scroll_offset).unwrap_or(0);
     f.render_widget(ratatui::widgets::Clear, area);
 
     let menu_bar_height: u16 = 1;
@@ -1589,16 +1600,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         terminal.draw(|f| {
+            let editor_info = if app.in_editor {
+                Some(EditorInfo {
+                    content: &app.editor_content,
+                    path: app.editor_path.as_ref(),
+                    modified: app.editor_modified,
+                    cursor_line: app.cursor_line,
+                    cursor_col: app.cursor_col,
+                    scroll_offset: app.scroll_offset,
+                })
+            } else {
+                None
+            };
             draw_ui(
                 &app.state,
                 app.git_status.as_ref(),
-                app.in_editor,
-                &app.editor_content,
-                app.editor_path.as_ref(),
-                app.editor_modified,
-                app.cursor_line,
-                app.cursor_col,
-                app.scroll_offset,
+                editor_info.as_ref(),
                 &app.theme,
                 &app.syntax_set,
                 &app.theme_set,
