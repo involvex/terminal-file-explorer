@@ -201,10 +201,7 @@ impl App {
                 }
             }
             MenuAction::Delete => {
-                if !self.state.selected_paths.is_empty() {
-                    self.dialog.show(DialogType::Delete);
-                    self.dialog.input = String::new();
-                } else if self.state.selected_entry().is_some() {
+                if !self.state.selected_paths.is_empty() || self.state.selected_entry().is_some() {
                     self.dialog.show(DialogType::Delete);
                     self.dialog.input = String::new();
                 }
@@ -957,7 +954,7 @@ fn draw_ui(
     state: &AppState,
     git_status: Option<&GitStatus>,
     in_editor: bool,
-    editor_content: &Vec<String>,
+    editor_content: &[String],
     editor_path: Option<&PathBuf>,
     editor_modified: bool,
     cursor_line: usize,
