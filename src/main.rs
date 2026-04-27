@@ -304,6 +304,13 @@ impl App {
             MenuAction::GrepInDir => {
                 self.command_palette.open_grep();
             }
+            MenuAction::ExternalOpen => {
+                if let Some(entry) = self.state.selected_entry() {
+                    if let Err(e) = opener::open(&entry.path) {
+                        self.dialog.error = Some(format!("Failed to open: {}", e));
+                    }
+                }
+            }
             MenuAction::ToggleGitDiff => {
                 self.state.show_git_diff = !self.state.show_git_diff;
             }
@@ -453,10 +460,8 @@ impl App {
             KeyCode::Char(' ') => {
                 self.state.toggle_selection();
             }
-            KeyCode::Up => {
-                if self.state.selected > 0 {
-                    self.state.selected -= 1;
-                }
+            KeyCode::Up if self.state.selected > 0 => {
+                self.state.selected -= 1;
             }
             KeyCode::Down => {
                 let has_parent = self.state.cwd.parent().is_some();
@@ -488,6 +493,13 @@ impl App {
             KeyCode::Char('e') => {
                 self.open_editor();
             }
+            KeyCode::Char('o')
+                if !key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                let _ = self.execute_action(MenuAction::ExternalOpen);
+            }
             KeyCode::Char('s')
                 if key
                     .modifiers
@@ -512,20 +524,17 @@ impl App {
             KeyCode::Char('r')
                 if key
                     .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                    && self.state.selected_entry().is_some() =>
             {
-                if self.state.selected_entry().is_some() {
-                    self.dialog.show(DialogType::Rename);
-                    if let Some(entry) = self.state.selected_entry() {
-                        self.dialog.input = entry.name.clone();
-                    }
+                self.dialog.show(DialogType::Rename);
+                if let Some(entry) = self.state.selected_entry() {
+                    self.dialog.input = entry.name.clone();
                 }
             }
-            KeyCode::Delete => {
-                if self.state.selected_entry().is_some() {
-                    self.dialog.show(DialogType::Delete);
-                    self.dialog.input = String::new();
-                }
+            KeyCode::Delete if self.state.selected_entry().is_some() => {
+                self.dialog.show(DialogType::Delete);
+                self.dialog.input = String::new();
             }
             KeyCode::Char('t')
                 if key
@@ -750,10 +759,8 @@ impl App {
                     self.dialog.input.push(c);
                 }
             }
-            KeyCode::Backspace => {
-                if self.dialog.dialog_type != DialogType::Delete {
-                    self.dialog.input.pop();
-                }
+            KeyCode::Backspace if self.dialog.dialog_type != DialogType::Delete => {
+                self.dialog.input.pop();
             }
             KeyCode::Enter => {
                 self.confirm_dialog();
@@ -845,42 +852,37 @@ impl App {
         }
 
         if self.menu_bar.is_open() {
-            match mouse.kind {
-                MouseEventKind::Down(_button) => {
-                    if mouse.row == 0 {
-                        let mut offset = 0u16;
-                        for (i, menu) in self.menu_bar.menus.iter().enumerate() {
-                            let menu_width = menu.name.len() as u16 + 2;
-                            if mouse.column >= offset && mouse.column < offset + menu_width {
-                                if self.menu_bar.open_index == Some(i) {
-                                    self.menu_bar.close();
-                                } else {
-                                    self.menu_bar.open(i);
-                                }
-                                return;
+            if let MouseEventKind::Down(_button) = mouse.kind {
+                if mouse.row == 0 {
+                    let mut offset = 0u16;
+                    for (i, menu) in self.menu_bar.menus.iter().enumerate() {
+                        let menu_width = menu.name.len() as u16 + 2;
+                        if mouse.column >= offset && mouse.column < offset + menu_width {
+                            if self.menu_bar.open_index == Some(i) {
+                                self.menu_bar.close();
+                            } else {
+                                self.menu_bar.open(i);
                             }
-                            offset += menu_width + 1;
+                            return;
                         }
-                        self.menu_bar.close();
-                    } else if let Some(action) =
-                        self.menu_bar.handle_dropdown_click(mouse.row, mouse.column)
-                    {
-                        let _ = self.execute_action(action);
-                        return;
-                    } else {
-                        self.menu_bar.close();
+                        offset += menu_width + 1;
                     }
+                    self.menu_bar.close();
+                } else if let Some(action) =
+                    self.menu_bar.handle_dropdown_click(mouse.row, mouse.column)
+                {
+                    let _ = self.execute_action(action);
+                    return;
+                } else {
+                    self.menu_bar.close();
                 }
-                _ => {}
             }
             return;
         }
 
         match mouse.kind {
-            MouseEventKind::ScrollUp => {
-                if self.state.selected > 0 {
-                    self.state.selected -= 1;
-                }
+            MouseEventKind::ScrollUp if self.state.selected > 0 => {
+                self.state.selected -= 1;
             }
             MouseEventKind::ScrollDown => {
                 let has_parent = self.state.cwd.parent().is_some();
@@ -1082,7 +1084,12 @@ fn draw_ui(
             let icon = if entry.is_dir {
                 "\u{1F4C1} "
             } else {
-                let ext = entry.name.split('.').last().unwrap_or("").to_lowercase();
+                let ext = entry
+                    .name
+                    .split('.')
+                    .next_back()
+                    .unwrap_or("")
+                    .to_lowercase();
                 match ext.as_str() {
                     "rs" => "\u{1E916} ",
                     "py" => "\u{1F40D} ",
@@ -1164,7 +1171,7 @@ fn draw_ui(
     };
     let preview_str = if state.preview_open { "ON" } else { "OFF" };
     let status_text = format!(
-        "[{}] | Hidden:{}(Ctrl+H) | Preview:{}(Tab) | Sort:{} | Theme:{} | F10:Menu | Ctrl+P:Cmd | Ctrl+F:Search | Ctrl+G:Grep | Ctrl+D:Diff",
+        "[{}] | Hidden:{}(Ctrl+H) | Preview:{}(Tab) | Sort:{} | o:Open | Theme:{} | F10:Menu | Ctrl+P:Cmd | Ctrl+F:Search | Ctrl+G:Grep | Ctrl+D:Diff",
         entry_info, hidden_str, preview_str, sort_str, theme.name
     );
     f.render_widget(
@@ -1421,6 +1428,7 @@ fn draw_keybindings(theme: &Theme, area: Rect, f: &mut Frame) {
         "File Operations:",
         "  Ctrl+N - New file | Ctrl+R - Rename",
         "  Delete  - Delete   | e      - Open editor",
+        "  o       - Open with default app",
         "  Ctrl+C - Copy     | Ctrl+X - Cut",
         "  Ctrl+V - Paste    | Ctrl+B - Bookmark",
         "  Ctrl+J - Jump to bookmark",

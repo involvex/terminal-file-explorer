@@ -65,6 +65,12 @@ impl CommandPaletteState {
             CommandItem::new("New Folder", "File", "", MenuAction::NewFolder),
             CommandItem::new("Search Files", "File", "Ctrl+F", MenuAction::OpenFileSearch),
             CommandItem::new("Grep in Directory", "File", "Ctrl+G", MenuAction::GrepInDir),
+            CommandItem::new(
+                "Open with Default App",
+                "File",
+                "o",
+                MenuAction::ExternalOpen,
+            ),
             CommandItem::new("Rename", "File", "Ctrl+R", MenuAction::Rename),
             CommandItem::new("Delete", "File", "Del", MenuAction::Delete),
             CommandItem::new("Copy", "Edit", "Ctrl+C", MenuAction::Copy),

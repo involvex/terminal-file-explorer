@@ -15,7 +15,7 @@ pub fn get_preview_text<'a>(
     syntax_set: &'a SyntaxSet,
     theme_set: &'a ThemeSet,
 ) -> Text<'a> {
-    let extension = name.split('.').last().unwrap_or("").to_lowercase();
+    let extension = name.split('.').next_back().unwrap_or("").to_lowercase();
 
     if path.is_dir() {
         return Text::from(format!("[DIR] {}", name));

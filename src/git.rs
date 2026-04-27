@@ -40,7 +40,7 @@ impl GitStatus {
 
     pub fn get_file_status(&self, filename: &str) -> FileGitStatus {
         for file in &self.files {
-            let file_name = file.path.split('/').last().unwrap_or(&file.path);
+            let file_name = file.path.split('/').next_back().unwrap_or(&file.path);
             if file_name == filename {
                 return file.status.clone();
             }
