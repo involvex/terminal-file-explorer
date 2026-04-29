@@ -1407,7 +1407,7 @@ fn draw_about(theme: &Theme, area: Rect, f: &mut Frame) {
     f.render_widget(&block, area);
     let inner = block.inner(area);
 
-    let about_text = "Terminal File Explorer\n\nA terminal-based file manager\nbuilt with Rust and ratatui.\n\nPress Enter or Esc to close.";
+    let about_text = "Terminal File Explorer\nA terminal-based file manager\nbuilt with Rust and ratatui.\nBuild by @involvex.Funding available through GitHub Sponsors.\nhttps://github.com/sponsors/involvex. \n\nPress Enter or Esc to close.";
     f.render_widget(
         Paragraph::new(about_text).style(Style::default().bg(theme.bg).fg(theme.fg)),
         inner,

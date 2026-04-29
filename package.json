@@ -20,5 +20,18 @@
   "files": [
     "target/release",
     "Readme.md"
-  ]
+  ],
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/involvex"
+    },
+    {
+      "type": "others",
+      "url": "https://paypal.me/involvex"
+    }
+  ],
+  "sponsor": {
+    "url": "https://github.com/sponsors/involvex"
+  }
 }
