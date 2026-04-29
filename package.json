@@ -6,7 +6,8 @@
   },
   "description": "A terminal file explorer",
   "bin": {
-    "terminal-file-explorer": "target/release/terminal-file-explorer.exe"
+    "terminal-file-explorer": "target/release/terminal-file-explorer.exe",
+    "txp": "target/release/terminal-file-explorer.exe"
   },
   "scripts": {
     "build": "cargo build --release",
