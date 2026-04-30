@@ -30,6 +30,8 @@ use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use theme::Theme;
 
+const EDITOR_PAGE_SIZE: usize = 20;
+
 struct App {
     state: AppState,
     config: Config,
@@ -509,7 +511,11 @@ impl App {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.close_editor();
+                if self.in_editor {
+                    self.close_editor();
+                } else {
+                    return true;
+                }
             }
             KeyCode::Char('n')
                 if key
@@ -623,12 +629,38 @@ impl App {
                         self.cursor_col = self.editor_content[self.cursor_line].len();
                     }
                 }
-                if self.cursor_line >= self.scroll_offset + 20 {
-                    self.scroll_offset = self.cursor_line - 19;
+                if self.cursor_line >= self.scroll_offset + EDITOR_PAGE_SIZE {
+                    self.scroll_offset = self.cursor_line - (EDITOR_PAGE_SIZE - 1);
                 }
             }
             KeyCode::Left => {
-                if self.cursor_col > 0 {
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                {
+                    if let Some(line) = self.editor_content.get(self.cursor_line) {
+                        let mut new_col = self.cursor_col;
+                        while new_col > 0
+                            && !line
+                                .chars()
+                                .nth(new_col - 1)
+                                .map(|c| c.is_alphanumeric())
+                                .unwrap_or(false)
+                        {
+                            new_col -= 1;
+                        }
+                        while new_col > 0
+                            && line
+                                .chars()
+                                .nth(new_col - 1)
+                                .map(|c| c.is_alphanumeric())
+                                .unwrap_or(false)
+                        {
+                            new_col -= 1;
+                        }
+                        self.cursor_col = new_col;
+                    }
+                } else if self.cursor_col > 0 {
                     self.cursor_col -= 1;
                 } else if self.cursor_line > 0 {
                     self.cursor_line -= 1;
@@ -636,22 +668,69 @@ impl App {
                 }
             }
             KeyCode::Right => {
-                let line_len = self
-                    .editor_content
-                    .get(self.cursor_line)
-                    .map(|l| l.len())
-                    .unwrap_or(0);
-                if self.cursor_col < line_len {
-                    self.cursor_col += 1;
-                } else if self.cursor_line < self.editor_content.len() - 1 {
-                    self.cursor_line += 1;
-                    self.cursor_col = 0;
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                {
+                    if let Some(line) = self.editor_content.get(self.cursor_line) {
+                        let line_len = line.len();
+                        let mut new_col = self.cursor_col;
+                        while new_col < line_len
+                            && line
+                                .chars()
+                                .nth(new_col)
+                                .map(|c| c.is_alphanumeric())
+                                .unwrap_or(false)
+                        {
+                            new_col += 1;
+                        }
+                        while new_col < line_len
+                            && !line
+                                .chars()
+                                .nth(new_col)
+                                .map(|c| c.is_alphanumeric())
+                                .unwrap_or(false)
+                        {
+                            new_col += 1;
+                        }
+                        self.cursor_col = new_col;
+                    }
+                } else {
+                    let line_len = self
+                        .editor_content
+                        .get(self.cursor_line)
+                        .map(|l| l.len())
+                        .unwrap_or(0);
+                    if self.cursor_col < line_len {
+                        self.cursor_col += 1;
+                    } else if self.cursor_line < self.editor_content.len() - 1 {
+                        self.cursor_line += 1;
+                        self.cursor_col = 0;
+                    }
                 }
             }
             KeyCode::Home => {
                 self.cursor_col = 0;
             }
+            KeyCode::Char('a')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.cursor_col = 0;
+            }
             KeyCode::End => {
+                self.cursor_col = self
+                    .editor_content
+                    .get(self.cursor_line)
+                    .map(|l| l.len())
+                    .unwrap_or(0);
+            }
+            KeyCode::Char('e')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 self.cursor_col = self
                     .editor_content
                     .get(self.cursor_line)
@@ -687,6 +766,23 @@ impl App {
                     self.editor_modified = true;
                 }
             }
+            KeyCode::Delete => {
+                let line_len = self
+                    .editor_content
+                    .get(self.cursor_line)
+                    .map(|l| l.len())
+                    .unwrap_or(0);
+                if self.cursor_col < line_len {
+                    self.push_undo();
+                    self.editor_content[self.cursor_line].remove(self.cursor_col);
+                    self.editor_modified = true;
+                } else if self.cursor_line < self.editor_content.len().saturating_sub(1) {
+                    self.push_undo();
+                    let next_line = self.editor_content.remove(self.cursor_line + 1);
+                    self.editor_content[self.cursor_line].push_str(&next_line);
+                    self.editor_modified = true;
+                }
+            }
             KeyCode::Enter => {
                 self.push_undo();
                 if self.cursor_line >= self.editor_content.len() {
@@ -706,6 +802,16 @@ impl App {
                 self.editor_content.insert(self.cursor_line + 1, new_line);
                 self.cursor_line += 1;
                 self.cursor_col = 0;
+                self.editor_modified = true;
+            }
+            KeyCode::Tab => {
+                self.push_undo();
+                let indent = "    ";
+                if self.cursor_line >= self.editor_content.len() {
+                    self.editor_content.push(String::new());
+                }
+                self.editor_content[self.cursor_line].insert_str(self.cursor_col, indent);
+                self.cursor_col += indent.len();
                 self.editor_modified = true;
             }
             KeyCode::Esc => {
@@ -738,6 +844,29 @@ impl App {
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 self.redo();
+            }
+            KeyCode::PageUp => {
+                self.cursor_line = self.cursor_line.saturating_sub(EDITOR_PAGE_SIZE);
+                if self.cursor_line < self.scroll_offset {
+                    self.scroll_offset = self.cursor_line;
+                }
+                if let Some(line) = self.editor_content.get(self.cursor_line) {
+                    if self.cursor_col > line.len() {
+                        self.cursor_col = line.len();
+                    }
+                }
+            }
+            KeyCode::PageDown => {
+                let max_line = self.editor_content.len().saturating_sub(1);
+                self.cursor_line = (self.cursor_line + EDITOR_PAGE_SIZE).min(max_line);
+                if self.cursor_line >= self.scroll_offset + EDITOR_PAGE_SIZE {
+                    self.scroll_offset = self.cursor_line - (EDITOR_PAGE_SIZE - 1);
+                }
+                if let Some(line) = self.editor_content.get(self.cursor_line) {
+                    if self.cursor_col > line.len() {
+                        self.cursor_col = line.len();
+                    }
+                }
             }
             _ => {}
         }
@@ -1382,7 +1511,7 @@ fn draw_ui(
             inner,
         );
 
-        let hints = " Ctrl+S:Save | Ctrl+Z:Undo | Ctrl+Y:Redo | Esc:Close ";
+        let hints = " Ctrl+S:Save | Ctrl+Z:Undo | Ctrl+Y:Redo | Ctrl+Q:Quit | Ctrl+A/E:Home/End | Tab:Indent | Del:Delete | PgUp/PgDn:Page | Esc:Close ";
         let hints_area = Rect::new(
             inner.x,
             inner.y + inner.height.saturating_sub(1),
@@ -1448,6 +1577,14 @@ fn draw_keybindings(theme: &Theme, area: Rect, f: &mut Frame) {
         "  Ctrl+I - Toggle dir sizes",
         "  Ctrl+D - Toggle Git diff",
         "  F5      - Refresh",
+        "",
+        "Editor (when open):",
+        "  Ctrl+S - Save   | Ctrl+Q - Quit editor",
+        "  Ctrl+Z - Undo   | Ctrl+Y - Redo",
+        "  Ctrl+A - Home   | Ctrl+E - End",
+        "  Tab    - Indent  | Del   - Delete",
+        "  PgUp/PgDn - Page up/down",
+        "  Ctrl+Left/Right - Word nav",
         "",
         "F10     - Menu bar",
         "Ctrl+P - Commands | Ctrl+F - Search",
