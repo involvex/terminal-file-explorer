@@ -232,7 +232,12 @@ impl MenuBarState {
         offset
     }
 
-    pub fn handle_dropdown_click(&mut self, row: u16, col: u16) -> Option<MenuAction> {
+    pub fn handle_dropdown_click(
+        &mut self,
+        row: u16,
+        col: u16,
+        menu_bar_y: u16,
+    ) -> Option<MenuAction> {
         let open_idx = self.open_index?;
         let menu = &self.menus[open_idx];
         let menu_x = self.menu_bar_column_offset(open_idx);
@@ -256,7 +261,7 @@ impl MenuBarState {
             return None;
         }
 
-        let dropdown_top: u16 = 1;
+        let dropdown_top: u16 = menu_bar_y + 1;
         let inner_left: u16 = menu_x + 1;
         let inner_right: u16 = menu_x + dropdown_width - 1;
 

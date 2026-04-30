@@ -995,7 +995,8 @@ impl App {
                     }
                     self.menu_bar.close();
                 } else if let Some(action) =
-                    self.menu_bar.handle_dropdown_click(mouse.row, mouse.column)
+                    self.menu_bar
+                        .handle_dropdown_click(mouse.row, mouse.column, 0)
                 {
                     let _ = self.execute_action(action);
                     return;
