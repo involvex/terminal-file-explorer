@@ -67,6 +67,7 @@ impl App {
         let mut state = AppState::new(cwd);
         state.show_hidden = config.show_hidden;
         state.calculate_dir_size = config.calculate_dir_size;
+        state.sort_order = config.sort_order;
         state.load_dir();
         let git_status = GitStatus::get_for_path(&state.cwd);
 
@@ -124,6 +125,8 @@ impl App {
     fn cycle_sort(&mut self) {
         self.state.sort_order = self.state.sort_order.next();
         self.state.sort_entries();
+        self.config.sort_order = self.state.sort_order;
+        let _ = config::save_config(&self.config);
     }
 
     fn open_editor(&mut self) {

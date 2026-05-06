@@ -1,11 +1,13 @@
 use std::fs;
 use std::path::PathBuf;
+use crate::state::SortOrder;
 
 pub struct Config {
     pub theme: String,
     pub show_hidden: bool,
     pub preview_enabled: bool,
     pub calculate_dir_size: bool,
+    pub sort_order: SortOrder,
     pub bookmarks: Vec<PathBuf>,
 }
 
@@ -16,6 +18,7 @@ impl Default for Config {
             show_hidden: false,
             preview_enabled: true,
             calculate_dir_size: false,
+            sort_order: SortOrder::Name,
             bookmarks: Vec::new(),
         }
     }
@@ -35,6 +38,7 @@ impl Config {
                             show_hidden: config.show_hidden.unwrap_or(false),
                             preview_enabled: config.preview_enabled.unwrap_or(true),
                             calculate_dir_size: config.calculate_dir_size.unwrap_or(false),
+                            sort_order: config.sort_order.unwrap_or(SortOrder::Name),
                             bookmarks: config.bookmarks.unwrap_or_default(),
                         };
                     }
@@ -51,6 +55,7 @@ struct TomlConfig {
     show_hidden: Option<bool>,
     preview_enabled: Option<bool>,
     calculate_dir_size: Option<bool>,
+    sort_order: Option<SortOrder>,
     bookmarks: Option<Vec<PathBuf>>,
 }
 
@@ -75,6 +80,7 @@ pub fn save_config(config: &Config) -> Result<(), String> {
         show_hidden: Some(config.show_hidden),
         preview_enabled: Some(config.preview_enabled),
         calculate_dir_size: Some(config.calculate_dir_size),
+        sort_order: Some(config.sort_order),
         bookmarks: Some(config.bookmarks.clone()),
     };
     let content = toml::to_string(&toml_config).map_err(|e| e.to_string())?;

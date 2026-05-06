@@ -2,8 +2,9 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum SortOrder {
     Name,
     Size,
@@ -53,20 +54,16 @@ impl FileEntry {
     }
 
     pub fn size_formatted(&self) -> String {
-        if self.is_dir {
-            return "<DIR>".to_string();
-        }
-        const KB: u64 = 1024;
-        const MB: u64 = KB * 1024;
-        const GB: u64 = MB * 1024;
-        if self.size >= GB {
-            format!("{:.1}G", self.size as f64 / GB as f64)
-        } else if self.size >= MB {
-            format!("{:.1}M", self.size as f64 / MB as f64)
-        } else if self.size >= KB {
-            format!("{:.1}K", self.size as f64 / KB as f64)
+        // Convert size to megabytes
+        let mb = self.size as f64 / (1024.0 * 1024.0);
+        if mb >= 1.0 {
+            if mb >= 1024.0 {
+                format!("{:.1}G", mb / 1024.0)
+            } else {
+                format!("{:.1}M", mb)
+            }
         } else {
-            format!("{}B", self.size)
+            "<1M".to_string()
         }
     }
 
