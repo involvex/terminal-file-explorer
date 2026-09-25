@@ -1,6 +1,6 @@
+use crate::state::SortOrder;
 use std::fs;
 use std::path::PathBuf;
-use crate::state::SortOrder;
 
 pub struct Config {
     pub theme: String,

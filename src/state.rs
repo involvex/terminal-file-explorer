@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum SortOrder {
@@ -88,6 +88,8 @@ pub struct AppState {
     pub show_git_diff: bool,
     pub calculate_dir_size: bool,
     pub selected_paths: HashSet<PathBuf>,
+    pub file_filter: String,
+    pub filter_active: bool,
 }
 
 impl AppState {
@@ -102,6 +104,8 @@ impl AppState {
             show_git_diff: false,
             calculate_dir_size: false,
             selected_paths: HashSet::new(),
+            file_filter: String::new(),
+            filter_active: false,
         }
     }
 
@@ -123,6 +127,39 @@ impl AppState {
             }
         }
         self.sort_entries();
+        self.apply_filter();
+        self.selected = self.selected.min(self.entries.len().saturating_sub(1));
+    }
+
+    pub fn apply_filter(&mut self) {
+        if self.file_filter.is_empty() {
+            return;
+        }
+        let filter_lower = self.file_filter.to_lowercase();
+        self.entries
+            .retain(|e| e.name.to_lowercase().contains(&filter_lower));
+    }
+
+    pub fn start_filter(&mut self) {
+        self.filter_active = true;
+        self.file_filter.clear();
+    }
+
+    pub fn cancel_filter(&mut self) {
+        self.filter_active = false;
+        self.file_filter.clear();
+        self.load_dir();
+    }
+
+    pub fn push_filter_char(&mut self, c: char) {
+        self.file_filter.push(c);
+        self.apply_filter();
+        self.selected = self.selected.min(self.entries.len().saturating_sub(1));
+    }
+
+    pub fn pop_filter_char(&mut self) {
+        self.file_filter.pop();
+        self.apply_filter();
         self.selected = self.selected.min(self.entries.len().saturating_sub(1));
     }
 

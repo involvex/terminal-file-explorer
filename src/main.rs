@@ -1,5 +1,6 @@
 mod command_palette;
 mod config;
+mod editor;
 mod fs;
 mod git;
 mod menu;
@@ -17,6 +18,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, SetTitle},
 };
+use editor::EditorState;
 use git::{FileGitStatus, GitStatus};
 use menu::{MenuAction, MenuBarState};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -37,15 +39,7 @@ struct App {
     config: Config,
     theme: Theme,
     dialog: DialogState,
-    editor_content: Vec<String>,
-    editor_path: Option<PathBuf>,
-    editor_modified: bool,
-    in_editor: bool,
-    cursor_line: usize,
-    cursor_col: usize,
-    scroll_offset: usize,
-    undo_stack: Vec<Vec<String>>,
-    redo_stack: Vec<Vec<String>>,
+    editor: EditorState,
     git_status: Option<GitStatus>,
     menu_bar: MenuBarState,
     command_palette: CommandPaletteState,
@@ -76,15 +70,7 @@ impl App {
             config,
             theme,
             dialog: DialogState::default(),
-            editor_content: Vec::new(),
-            editor_path: None,
-            editor_modified: false,
-            in_editor: false,
-            cursor_line: 0,
-            cursor_col: 0,
-            scroll_offset: 0,
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
+            editor: EditorState::new(),
             git_status,
             menu_bar: MenuBarState::new(),
             command_palette: CommandPaletteState::new(),
@@ -133,60 +119,19 @@ impl App {
         if let Some(entry) = self.state.selected_entry() {
             if !entry.is_dir {
                 if let Ok(content) = fs::read_file(&entry.path) {
-                    self.editor_content = content.lines().map(|s| s.to_string()).collect();
-                    self.editor_path = Some(entry.path.clone());
-                    self.editor_modified = false;
-                    self.in_editor = true;
-                    self.cursor_line = 0;
-                    self.cursor_col = 0;
-                    self.scroll_offset = 0;
-                    self.undo_stack.clear();
-                    self.redo_stack.clear();
+                    let lines = content.lines().map(|s| s.to_string()).collect();
+                    self.editor.open(lines, entry.path.clone());
                 }
             }
         }
     }
 
     fn save_editor(&mut self) {
-        if let Some(path) = &self.editor_path {
-            let content = self.editor_content.join("\n");
-            if fs::write_file(path, &content).is_ok() {
-                self.editor_modified = false;
-            }
-        }
+        self.editor.save();
     }
 
     fn close_editor(&mut self) {
-        self.in_editor = false;
-        self.editor_path = None;
-        self.editor_content.clear();
-        self.editor_modified = false;
-        self.cursor_line = 0;
-        self.cursor_col = 0;
-        self.scroll_offset = 0;
-        self.undo_stack.clear();
-        self.redo_stack.clear();
-    }
-
-    fn push_undo(&mut self) {
-        self.undo_stack.push(self.editor_content.clone());
-        self.redo_stack.clear();
-    }
-
-    fn undo(&mut self) {
-        if let Some(prev) = self.undo_stack.pop() {
-            self.redo_stack.push(self.editor_content.clone());
-            self.editor_content = prev;
-            self.editor_modified = true;
-        }
-    }
-
-    fn redo(&mut self) {
-        if let Some(next) = self.redo_stack.pop() {
-            self.undo_stack.push(self.editor_content.clone());
-            self.editor_content = next;
-            self.editor_modified = true;
-        }
+        self.editor.close();
     }
 
     fn execute_action(&mut self, action: MenuAction) -> bool {
@@ -238,11 +183,7 @@ impl App {
                         if self.clipboard_cut {
                             let _ = fs::rename_path(path, &dest);
                         } else {
-                            // TODO: Implement recursive copy in fs.rs
-                            // For now just basic file copy if possible
-                            if path.is_file() {
-                                let _ = std::fs::copy(path, &dest);
-                            }
+                            let _ = fs::copy_path(path, &dest);
                         }
                     }
                     if self.clipboard_cut {
@@ -259,13 +200,13 @@ impl App {
                 return true;
             }
             MenuAction::Undo => {
-                if self.in_editor {
-                    self.undo();
+                if self.editor.active {
+                    self.editor.undo();
                 }
             }
             MenuAction::Redo => {
-                if self.in_editor {
-                    self.redo();
+                if self.editor.active {
+                    self.editor.redo();
                 }
             }
             MenuAction::ToggleHidden => {
@@ -396,13 +337,18 @@ impl App {
             return false;
         }
 
-        if self.in_editor {
+        if self.editor.active {
             self.handle_editor_key(key);
             return false;
         }
 
         if self.dialog.dialog_type != DialogType::None {
             self.handle_dialog_key(key);
+            return false;
+        }
+
+        if self.state.filter_active {
+            self.handle_filter_key(key);
             return false;
         }
 
@@ -462,6 +408,9 @@ impl App {
             KeyCode::Char(' ') => {
                 self.state.toggle_selection();
             }
+            KeyCode::Char('/') => {
+                self.state.start_filter();
+            }
             KeyCode::Up if self.state.selected > 0 => {
                 self.state.selected -= 1;
             }
@@ -514,7 +463,7 @@ impl App {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                if self.in_editor {
+                if self.editor.active {
                     self.close_editor();
                 } else {
                     return true;
@@ -603,46 +552,39 @@ impl App {
     fn handle_editor_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up => {
-                if self.cursor_line > 0 {
-                    self.cursor_line -= 1;
-                    if self.cursor_col
-                        > self
-                            .editor_content
-                            .get(self.cursor_line)
-                            .map(|l| l.len())
-                            .unwrap_or(0)
+                let ed = &mut self.editor;
+                if ed.cursor_line > 0 {
+                    ed.cursor_line -= 1;
+                    if ed.cursor_col > ed.content.get(ed.cursor_line).map(|l| l.len()).unwrap_or(0)
                     {
-                        self.cursor_col = self.editor_content[self.cursor_line].len();
+                        ed.cursor_col = ed.content[ed.cursor_line].len();
                     }
                 }
-                if self.cursor_line < self.scroll_offset {
-                    self.scroll_offset = self.cursor_line;
+                if ed.cursor_line < ed.scroll_offset {
+                    ed.scroll_offset = ed.cursor_line;
                 }
             }
             KeyCode::Down => {
-                if self.cursor_line < self.editor_content.len().saturating_sub(1) {
-                    self.cursor_line += 1;
-                    if self.cursor_col
-                        > self
-                            .editor_content
-                            .get(self.cursor_line)
-                            .map(|l| l.len())
-                            .unwrap_or(0)
+                let ed = &mut self.editor;
+                if ed.cursor_line < ed.content.len().saturating_sub(1) {
+                    ed.cursor_line += 1;
+                    if ed.cursor_col > ed.content.get(ed.cursor_line).map(|l| l.len()).unwrap_or(0)
                     {
-                        self.cursor_col = self.editor_content[self.cursor_line].len();
+                        ed.cursor_col = ed.content[ed.cursor_line].len();
                     }
                 }
-                if self.cursor_line >= self.scroll_offset + EDITOR_PAGE_SIZE {
-                    self.scroll_offset = self.cursor_line - (EDITOR_PAGE_SIZE - 1);
+                if ed.cursor_line >= ed.scroll_offset + EDITOR_PAGE_SIZE {
+                    ed.scroll_offset = ed.cursor_line - (EDITOR_PAGE_SIZE - 1);
                 }
             }
             KeyCode::Left => {
+                let ed = &mut self.editor;
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL)
                 {
-                    if let Some(line) = self.editor_content.get(self.cursor_line) {
-                        let mut new_col = self.cursor_col;
+                    if let Some(line) = ed.content.get(ed.cursor_line) {
+                        let mut new_col = ed.cursor_col;
                         while new_col > 0
                             && !line
                                 .chars()
@@ -661,23 +603,24 @@ impl App {
                         {
                             new_col -= 1;
                         }
-                        self.cursor_col = new_col;
+                        ed.cursor_col = new_col;
                     }
-                } else if self.cursor_col > 0 {
-                    self.cursor_col -= 1;
-                } else if self.cursor_line > 0 {
-                    self.cursor_line -= 1;
-                    self.cursor_col = self.editor_content[self.cursor_line].len();
+                } else if ed.cursor_col > 0 {
+                    ed.cursor_col -= 1;
+                } else if ed.cursor_line > 0 {
+                    ed.cursor_line -= 1;
+                    ed.cursor_col = ed.content[ed.cursor_line].len();
                 }
             }
             KeyCode::Right => {
+                let ed = &mut self.editor;
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL)
                 {
-                    if let Some(line) = self.editor_content.get(self.cursor_line) {
+                    if let Some(line) = ed.content.get(ed.cursor_line) {
                         let line_len = line.len();
-                        let mut new_col = self.cursor_col;
+                        let mut new_col = ed.cursor_col;
                         while new_col < line_len
                             && line
                                 .chars()
@@ -696,36 +639,33 @@ impl App {
                         {
                             new_col += 1;
                         }
-                        self.cursor_col = new_col;
+                        ed.cursor_col = new_col;
                     }
                 } else {
-                    let line_len = self
-                        .editor_content
-                        .get(self.cursor_line)
-                        .map(|l| l.len())
-                        .unwrap_or(0);
-                    if self.cursor_col < line_len {
-                        self.cursor_col += 1;
-                    } else if self.cursor_line < self.editor_content.len() - 1 {
-                        self.cursor_line += 1;
-                        self.cursor_col = 0;
+                    let line_len = ed.content.get(ed.cursor_line).map(|l| l.len()).unwrap_or(0);
+                    if ed.cursor_col < line_len {
+                        ed.cursor_col += 1;
+                    } else if ed.cursor_line < ed.content.len() - 1 {
+                        ed.cursor_line += 1;
+                        ed.cursor_col = 0;
                     }
                 }
             }
             KeyCode::Home => {
-                self.cursor_col = 0;
+                self.editor.cursor_col = 0;
             }
             KeyCode::Char('a')
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.cursor_col = 0;
+                self.editor.cursor_col = 0;
             }
             KeyCode::End => {
-                self.cursor_col = self
-                    .editor_content
-                    .get(self.cursor_line)
+                self.editor.cursor_col = self
+                    .editor
+                    .content
+                    .get(self.editor.cursor_line)
                     .map(|l| l.len())
                     .unwrap_or(0);
             }
@@ -734,9 +674,10 @@ impl App {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.cursor_col = self
-                    .editor_content
-                    .get(self.cursor_line)
+                self.editor.cursor_col = self
+                    .editor
+                    .content
+                    .get(self.editor.cursor_line)
                     .map(|l| l.len())
                     .unwrap_or(0);
             }
@@ -745,129 +686,73 @@ impl App {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.push_undo();
-                if self.cursor_line >= self.editor_content.len() {
-                    self.editor_content.push(String::new());
-                }
-                self.editor_content[self.cursor_line].insert(self.cursor_col, c);
-                self.cursor_col += 1;
-                self.editor_modified = true;
+                self.editor.insert_char(c);
             }
             KeyCode::Backspace => {
-                if self.cursor_col > 0 {
-                    self.push_undo();
-                    self.editor_content[self.cursor_line].remove(self.cursor_col - 1);
-                    self.cursor_col -= 1;
-                    self.editor_modified = true;
-                } else if self.cursor_line > 0 {
-                    self.push_undo();
-                    let _current_len = self.editor_content[self.cursor_line].len();
-                    let current = self.editor_content.remove(self.cursor_line);
-                    self.cursor_line -= 1;
-                    self.cursor_col = self.editor_content[self.cursor_line].len();
-                    self.editor_content[self.cursor_line].push_str(&current);
-                    self.editor_modified = true;
-                }
+                self.editor.backspace();
             }
             KeyCode::Delete => {
-                let line_len = self
-                    .editor_content
-                    .get(self.cursor_line)
-                    .map(|l| l.len())
-                    .unwrap_or(0);
-                if self.cursor_col < line_len {
-                    self.push_undo();
-                    self.editor_content[self.cursor_line].remove(self.cursor_col);
-                    self.editor_modified = true;
-                } else if self.cursor_line < self.editor_content.len().saturating_sub(1) {
-                    self.push_undo();
-                    let next_line = self.editor_content.remove(self.cursor_line + 1);
-                    self.editor_content[self.cursor_line].push_str(&next_line);
-                    self.editor_modified = true;
-                }
+                self.editor.delete_char();
             }
             KeyCode::Enter => {
-                self.push_undo();
-                if self.cursor_line >= self.editor_content.len() {
-                    self.editor_content.push(String::new());
-                }
-                let current = self.editor_content[self.cursor_line].clone();
-                let new_line = if self.cursor_col >= current.len() {
-                    String::new()
-                } else {
-                    current[self.cursor_col..].to_string()
-                };
-                self.editor_content[self.cursor_line] = if self.cursor_col >= current.len() {
-                    current
-                } else {
-                    current[..self.cursor_col].to_string()
-                };
-                self.editor_content.insert(self.cursor_line + 1, new_line);
-                self.cursor_line += 1;
-                self.cursor_col = 0;
-                self.editor_modified = true;
+                self.editor.newline();
             }
             KeyCode::Tab => {
-                self.push_undo();
-                let indent = "    ";
-                if self.cursor_line >= self.editor_content.len() {
-                    self.editor_content.push(String::new());
-                }
-                self.editor_content[self.cursor_line].insert_str(self.cursor_col, indent);
-                self.cursor_col += indent.len();
-                self.editor_modified = true;
+                self.editor.insert_tab();
             }
             KeyCode::Esc => {
-                self.close_editor();
+                self.editor.close();
             }
             KeyCode::Char('s')
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.save_editor();
+                self.editor.save();
             }
             KeyCode::Char('q')
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.close_editor();
+                self.editor.close();
             }
             KeyCode::Char('z')
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.undo();
+                self.editor.undo();
             }
             KeyCode::Char('y')
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.redo();
+                self.editor.redo();
             }
             KeyCode::PageUp => {
-                self.cursor_line = self.cursor_line.saturating_sub(EDITOR_PAGE_SIZE);
-                if self.cursor_line < self.scroll_offset {
-                    self.scroll_offset = self.cursor_line;
+                let ed = &mut self.editor;
+                ed.cursor_line = ed.cursor_line.saturating_sub(EDITOR_PAGE_SIZE);
+                if ed.cursor_line < ed.scroll_offset {
+                    ed.scroll_offset = ed.cursor_line;
                 }
-                if let Some(line) = self.editor_content.get(self.cursor_line) {
-                    if self.cursor_col > line.len() {
-                        self.cursor_col = line.len();
+                if let Some(line) = ed.content.get(ed.cursor_line) {
+                    if ed.cursor_col > line.len() {
+                        ed.cursor_col = line.len();
                     }
                 }
             }
             KeyCode::PageDown => {
-                let max_line = self.editor_content.len().saturating_sub(1);
-                self.cursor_line = (self.cursor_line + EDITOR_PAGE_SIZE).min(max_line);
-                if self.cursor_line >= self.scroll_offset + EDITOR_PAGE_SIZE {
-                    self.scroll_offset = self.cursor_line - (EDITOR_PAGE_SIZE - 1);
+                let ed = &mut self.editor;
+                let max_line = ed.content.len().saturating_sub(1);
+                ed.cursor_line = (ed.cursor_line + EDITOR_PAGE_SIZE).min(max_line);
+                if ed.cursor_line >= ed.scroll_offset + EDITOR_PAGE_SIZE {
+                    ed.scroll_offset = ed.cursor_line - (EDITOR_PAGE_SIZE - 1);
                 }
-                if let Some(line) = self.editor_content.get(self.cursor_line) {
-                    if self.cursor_col > line.len() {
-                        self.cursor_col = line.len();
+                if let Some(line) = ed.content.get(ed.cursor_line) {
+                    if ed.cursor_col > line.len() {
+                        ed.cursor_col = line.len();
                     }
                 }
             }
@@ -974,8 +859,33 @@ impl App {
         self.dialog.hide();
     }
 
+    fn handle_filter_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.state.cancel_filter();
+            }
+            KeyCode::Enter => {
+                self.state.filter_active = false;
+            }
+            KeyCode::Backspace => {
+                self.state.pop_filter_char();
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.state.push_filter_char(c);
+            }
+            _ => {}
+        }
+    }
+
     fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        if self.in_editor || self.command_palette.active || self.show_about || self.show_keybindings
+        if self.editor.active
+            || self.command_palette.active
+            || self.show_about
+            || self.show_keybindings
         {
             return;
         }
@@ -1311,10 +1221,22 @@ fn draw_ui(
         "hidden"
     };
     let preview_str = if state.preview_open { "ON" } else { "OFF" };
-    let status_text = format!(
-        "[{}] | Hidden:{}(Ctrl+H) | Preview:{}(Tab) | Sort:{} | o:Open | Theme:{} | F10:Menu | Ctrl+P:Cmd | Ctrl+F:Search | Ctrl+G:Grep | Ctrl+D:Diff",
-        entry_info, hidden_str, preview_str, sort_str, theme.name
-    );
+    let filter_str = if state.filter_active {
+        format!("Filter:{}", state.file_filter)
+    } else {
+        String::new()
+    };
+    let status_text = if filter_str.is_empty() {
+        format!(
+            "[{}] | Hidden:{}(Ctrl+H) | Preview:{}(Tab) | Sort:{} | o:Open | Theme:{} | F10:Menu | Ctrl+P:Cmd | Ctrl+F:Search | Ctrl+G:Grep | Ctrl+D:Diff",
+            entry_info, hidden_str, preview_str, sort_str, theme.name
+        )
+    } else {
+        format!(
+            "[{}] | Hidden:{}(Ctrl+H) | Preview:{}(Tab) | Sort:{} | o:Open | Theme:{} | F10:Menu | Ctrl+P:Cmd | Ctrl+F:Search | Ctrl+G:Grep | Ctrl+D:Diff | {}",
+            entry_info, hidden_str, preview_str, sort_str, theme.name, filter_str
+        )
+    };
     f.render_widget(
         Paragraph::new(status_text).style(Style::default().fg(theme.status_fg).bg(theme.status_bg)),
         vertical[2],
@@ -1565,6 +1487,7 @@ fn draw_keybindings(theme: &Theme, area: Rect, f: &mut Frame) {
         "  Left/BackTab - Go to parent dir",
         "  Tab          - Toggle preview pane",
         "  Space        - Toggle file selection",
+        "  /            - Filter files in current dir",
         "",
         "File Operations:",
         "  Ctrl+N - New file | Ctrl+R - Rename",
@@ -1741,14 +1664,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         terminal.draw(|f| {
-            let editor_info = if app.in_editor {
+            let editor_info = if app.editor.active {
                 Some(EditorInfo {
-                    content: &app.editor_content,
-                    path: app.editor_path.as_ref(),
-                    modified: app.editor_modified,
-                    cursor_line: app.cursor_line,
-                    cursor_col: app.cursor_col,
-                    scroll_offset: app.scroll_offset,
+                    content: &app.editor.content,
+                    path: app.editor.path.as_ref(),
+                    modified: app.editor.modified,
+                    cursor_line: app.editor.cursor_line,
+                    cursor_col: app.editor.cursor_col,
+                    scroll_offset: app.editor.scroll_offset,
                 })
             } else {
                 None

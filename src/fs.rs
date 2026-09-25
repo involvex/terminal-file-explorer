@@ -29,6 +29,22 @@ pub fn write_file(path: &PathBuf, content: &str) -> Result<(), String> {
     fs::write(path, content).map_err(|e| e.to_string())
 }
 
+pub fn copy_path(src: &PathBuf, dest: &PathBuf) -> Result<(), String> {
+    if src.is_dir() {
+        fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+        if let Ok(entries) = fs::read_dir(src) {
+            for entry in entries.flatten() {
+                let src_path = entry.path();
+                let dest_path = dest.join(entry.file_name());
+                copy_path(&src_path, &dest_path)?;
+            }
+        }
+    } else {
+        fs::copy(src, dest).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn get_dir_size(path: &PathBuf) -> u64 {
     let mut size = 0;
     if let Ok(entries) = fs::read_dir(path) {
